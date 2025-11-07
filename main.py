@@ -190,13 +190,12 @@ class ArcadeApp:
             self.active_game.screen = self.screen
             self.active_game.cfg = self.cfg
 
-    # ----- Pause menu helpers -----
     def handle_pause_event(self, event: pygame.event.Event) -> None:
-        if not self.pause_button_rects:
+        if not self.pause_button_rects: # if esc is pressed call the build pause buttons
             self.build_pause_buttons()
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1: #find which button is clicked
             mx, my = event.pos
-            for key, rect in self.pause_button_rects:
+            for key, rect in self.pause_button_rects: # perform button actions
                 if rect.collidepoint(mx, my):
                     if key == "resume":
                         self.paused = False
@@ -231,16 +230,13 @@ class ArcadeApp:
             self.pause_button_rects.append((key, pygame.Rect(x, y, w, h)))
 
     def draw_pause_menu(self) -> None:
-        # Dim background
         overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 160))
         self.screen.blit(overlay, (0, 0))
 
-        # Title
         title = self.font.render("Paused", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 140))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 
-        # Buttons
         self.build_pause_buttons()
         mouse_pos = pygame.mouse.get_pos()
         for key, rect in self.pause_button_rects:
