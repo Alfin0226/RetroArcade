@@ -10,6 +10,7 @@ from user import UserSession
 import database
 from database import DatabaseManager
 from login_register_menu import LoginRegisterMenu
+from async_helper import run_async, stop_async_loop
 
 MENU_OPTIONS = ["snake", "tetris", "pac_man", "space_invaders", "hybrid", "leaderboard", "quit"]
 
@@ -41,7 +42,7 @@ class ArcadeApp:
         # Remember last windowed size when toggling fullscreen
         self.windowed_size = self.cfg.screen_size
         self.db: DatabaseManager | None = None
-        asyncio.run(self._init_database())
+        run_async(self._init_database())
         # Login/Register menu
         self.login_menu: LoginRegisterMenu | None = None
         self.session: UserSession = UserSession()
@@ -71,7 +72,8 @@ class ArcadeApp:
     def cleanup(self):
         """Clean up resources before exit."""
         if self.db:
-            asyncio.run(self.db.disconnect())
+            run_async(self.db.disconnect())
+        stop_async_loop()
         pygame.quit()
 
     def run(self) -> None:

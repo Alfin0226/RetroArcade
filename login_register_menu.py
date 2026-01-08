@@ -5,6 +5,7 @@ import re
 import subprocess
 from typing import Optional, Callable, TYPE_CHECKING
 from user import register_user_async, login_user_async, UserSession
+from async_helper import run_async
 
 if TYPE_CHECKING:
     from database import DatabaseManager
@@ -468,7 +469,7 @@ class LoginRegisterMenu:
         # Try to register
         self.processing = True
         try:
-            user_id = asyncio.run(register_user_async(self.db, username, email, password))
+            user_id = run_async(register_user_async(self.db, username, email, password))
             if user_id:
                 self.show_message("Registration successful! Please login.", error=False)
                 # Switch to login mode
@@ -504,7 +505,7 @@ class LoginRegisterMenu:
         # Try to login
         self.processing = True
         try:
-            user = asyncio.run(login_user_async(self.db, identifier, password))
+            user = run_async(login_user_async(self.db, identifier, password))
             if user:
                 self.session.login(user)
                 self.show_message(f"Welcome back, {self.session.username}!", error=False)

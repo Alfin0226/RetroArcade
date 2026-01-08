@@ -118,6 +118,13 @@ class PostgresBackend(DatabaseBackend):
             self.pool = None
             return False
     
+    async def executemany(self, query: str, args_list: List[tuple]) -> None:
+        """Execute a query multiple times with different arguments."""
+        if not self.pool:
+            raise RuntimeError("PostgreSQL not connected")
+        async with self.pool.acquire() as conn:
+            await conn.executemany(query, args_list)
+    
     async def disconnect(self) -> None:
         """Close connection pool."""
         if self.pool:
@@ -166,7 +173,8 @@ class PostgresBackend(DatabaseBackend):
                 username VARCHAR(50) UNIQUE NOT NULL,
                 email VARCHAR(100) UNIQUE NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW()
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
             );
             
             -- Scores table (game statistics)
@@ -179,7 +187,8 @@ class PostgresBackend(DatabaseBackend):
                 space_invaders_score INTEGER DEFAULT 0,
                 hybrid_score INTEGER DEFAULT 0,
                 login_streak INTEGER DEFAULT 0,
-                last_login_date DATE
+                last_login_date DATE,
+                updated_at TIMESTAMP DEFAULT NOW()
             );
             
             -- User settings table (preferences)
@@ -187,7 +196,8 @@ class PostgresBackend(DatabaseBackend):
                 user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
                 difficulty VARCHAR(20) DEFAULT 'intermediate',
                 volume INTEGER DEFAULT 100,
-                keybinds TEXT DEFAULT '{}'
+                keybinds TEXT DEFAULT '{}',
+                updated_at TIMESTAMP DEFAULT NOW()
             );
             
             -- Indexes for performance
@@ -198,10 +208,63 @@ class PostgresBackend(DatabaseBackend):
             CREATE INDEX IF NOT EXISTS idx_scores_tetris ON scores(tetris_score DESC);
             CREATE INDEX IF NOT EXISTS idx_scores_snake ON scores(snake_score DESC);
             CREATE INDEX IF NOT EXISTS idx_scores_space_invaders ON scores(space_invaders_score DESC);
-            CREATE INDEX IF NOT EXISTS idx_scores_hybrid ON scores(hybrid_score DESC);
         """
         async with self.pool.acquire() as conn:
             await conn.execute(schema)
+            # Run migrations for existing databases (adds new columns like hybrid_score, updated_at)
+            await self._run_migrations(conn)
+            # Create indexes after migrations ensure all columns exist
+            try:
+                await conn.execute("CREATE INDEX IF NOT EXISTS idx_scores_hybrid ON scores(hybrid_score DESC)")
+            except Exception:
+                pass
+    
+    async def _run_migrations(self, conn) -> None:
+        """Run database migrations for existing PostgreSQL databases."""
+        migrations_run = False
+        
+        # Add hybrid_score column to scores if not exists
+        try:
+            result = await conn.fetchval("SELECT column_name FROM information_schema.columns WHERE table_name='scores' AND column_name='hybrid_score'")
+            if not result:
+                await conn.execute("ALTER TABLE scores ADD COLUMN hybrid_score INTEGER DEFAULT 0")
+                migrations_run = True
+                print("  ✅ Added hybrid_score column")
+        except Exception as e:
+            print(f"  Migration note (hybrid_score): {e}")
+        
+        # Add updated_at column to users if not exists
+        try:
+            result = await conn.fetchval("SELECT column_name FROM information_schema.columns WHERE table_name='users' AND column_name='updated_at'")
+            if not result:
+                await conn.execute("ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()")
+                migrations_run = True
+                print("  ✅ Added updated_at to users")
+        except Exception as e:
+            print(f"  Migration note (users.updated_at): {e}")
+        
+        # Add updated_at column to scores if not exists
+        try:
+            result = await conn.fetchval("SELECT column_name FROM information_schema.columns WHERE table_name='scores' AND column_name='updated_at'")
+            if not result:
+                await conn.execute("ALTER TABLE scores ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()")
+                migrations_run = True
+                print("  ✅ Added updated_at to scores")
+        except Exception as e:
+            print(f"  Migration note (scores.updated_at): {e}")
+        
+        # Add updated_at column to user_settings if not exists
+        try:
+            result = await conn.fetchval("SELECT column_name FROM information_schema.columns WHERE table_name='user_settings' AND column_name='updated_at'")
+            if not result:
+                await conn.execute("ALTER TABLE user_settings ADD COLUMN updated_at TIMESTAMP DEFAULT NOW()")
+                migrations_run = True
+                print("  ✅ Added updated_at to user_settings")
+        except Exception as e:
+            print(f"  Migration note (user_settings.updated_at): {e}")
+        
+        if migrations_run:
+            print("  ✅ Database migrations completed")
 
 
 class SQLiteBackend(DatabaseBackend):
@@ -302,6 +365,14 @@ class SQLiteBackend(DatabaseBackend):
                 return row[column]
             return None
     
+    async def executemany(self, query: str, args_list: List[tuple]) -> None:
+        """Execute a query multiple times with different arguments."""
+        if not self.conn:
+            raise RuntimeError("SQLite not connected")
+        converted_query = self._convert_query(query)
+        await self.conn.executemany(converted_query, args_list)
+        await self.conn.commit()
+    
     async def init_schema(self) -> None:
         """Initialize SQLite schema."""
         if not self.conn:
@@ -315,7 +386,8 @@ class SQLiteBackend(DatabaseBackend):
                 username TEXT UNIQUE NOT NULL,
                 email TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
             );
             
             -- Scores table (game statistics) - base columns only
@@ -327,7 +399,8 @@ class SQLiteBackend(DatabaseBackend):
                 snake_score INTEGER DEFAULT 0,
                 space_invaders_score INTEGER DEFAULT 0,
                 login_streak INTEGER DEFAULT 0,
-                last_login_date TEXT
+                last_login_date TEXT,
+                updated_at TEXT DEFAULT (datetime('now'))
             );
             
             -- User settings table (preferences)
@@ -335,7 +408,8 @@ class SQLiteBackend(DatabaseBackend):
                 user_id INTEGER PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
                 difficulty TEXT DEFAULT 'intermediate',
                 volume INTEGER DEFAULT 100,
-                keybinds TEXT DEFAULT '{}'
+                keybinds TEXT DEFAULT '{}',
+                updated_at TEXT DEFAULT (datetime('now'))
             );
         """
         # Execute table creation
@@ -382,6 +456,39 @@ class SQLiteBackend(DatabaseBackend):
                 await self.conn.execute("ALTER TABLE scores ADD COLUMN hybrid_score INTEGER DEFAULT 0")
                 await self.conn.commit()
                 print("✅ Added hybrid_score column to scores table")
+            except Exception as e:
+                print(f"Migration note: {e}")
+        
+        # Add updated_at column to users if not exists
+        try:
+            await self.conn.execute("SELECT updated_at FROM users LIMIT 1")
+        except Exception:
+            try:
+                await self.conn.execute("ALTER TABLE users ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))")
+                await self.conn.commit()
+                print("✅ Added updated_at column to users table")
+            except Exception as e:
+                print(f"Migration note: {e}")
+        
+        # Add updated_at column to scores if not exists
+        try:
+            await self.conn.execute("SELECT updated_at FROM scores LIMIT 1")
+        except Exception:
+            try:
+                await self.conn.execute("ALTER TABLE scores ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))")
+                await self.conn.commit()
+                print("✅ Added updated_at column to scores table")
+            except Exception as e:
+                print(f"Migration note: {e}")
+        
+        # Add updated_at column to user_settings if not exists
+        try:
+            await self.conn.execute("SELECT updated_at FROM user_settings LIMIT 1")
+        except Exception:
+            try:
+                await self.conn.execute("ALTER TABLE user_settings ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))")
+                await self.conn.commit()
+                print("✅ Added updated_at column to user_settings table")
             except Exception as e:
                 print(f"Migration note: {e}")
 
@@ -434,6 +541,9 @@ class DatabaseManager:
             print("🔄 Attempting PostgreSQL (production) connection...")
             self.postgres = PostgresBackend(self.config)
             if await self.postgres.connect():
+                print("🔄 Updating online database schema...")
+                await self.postgres.init_schema()  # Initialize schema and run migrations
+                print("✅ Online database schema updated")
                 self.active_backend = self.postgres
                 self.using_production = True
                 print(f"✅ Connected to {self.backend_name}")
@@ -449,6 +559,433 @@ class DatabaseManager:
         
         if not self.active_backend or not self.active_backend.is_connected:
             print("❌ Failed to connect to any database!")
+        
+        # Sync local data to online if both are available
+        if self.using_production and self.using_local:
+            await self._try_sync_on_connect()
+    
+    async def _try_sync_on_connect(self) -> None:
+        """Try to sync local data to online database on connect. Silent on failure."""
+        try:
+            # Check if there are local users that don't exist online
+            local_users = await self.sqlite.fetch("SELECT username FROM users")
+            for local_user in local_users:
+                username = local_user['username']
+                online_user = await self.postgres.fetchrow(
+                    "SELECT user_id FROM users WHERE username = $1", username
+                )
+                if not online_user:
+                    # This user exists locally but not online - sync up
+                    print(f"🔄 Syncing local user '{username}' to online...")
+                    local_data = await self.sqlite.fetchrow(
+                        "SELECT * FROM users WHERE username = $1", username
+                    )
+                    if local_data:
+                        await self._push_user_to_online(local_data)
+            print("✅ Local data synced to online")
+        except Exception as e:
+            # Silent failure - sync is best effort
+            print(f"ℹ️  Sync skipped: {e}")
+    
+    async def _push_user_to_online(self, local_user: Dict) -> None:
+        """Push a local user to online database."""
+        try:
+            # Insert user
+            user_id = await self.postgres.fetchval("""
+                INSERT INTO users (username, email, password_hash, created_at, updated_at)
+                VALUES ($1, $2, $3, NOW(), NOW())
+                RETURNING user_id
+            """, local_user['username'], local_user['email'], local_user['password_hash'])
+            
+            # Get local scores
+            local_scores = await self.sqlite.fetchrow(
+                "SELECT * FROM scores WHERE user_id = $1", local_user['user_id']
+            )
+            
+            if local_scores:
+                last_login = local_scores.get('last_login_date')
+                if isinstance(last_login, str) and last_login:
+                    last_login = date.fromisoformat(last_login)
+                elif not last_login:
+                    last_login = None
+                    
+                await self.postgres.execute("""
+                    INSERT INTO scores (user_id, total_score, pacman_score, tetris_score,
+                        snake_score, space_invaders_score, hybrid_score, login_streak, 
+                        last_login_date, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                """, user_id, local_scores.get('total_score', 0),
+                    local_scores.get('pacman_score', 0), local_scores.get('tetris_score', 0),
+                    local_scores.get('snake_score', 0), local_scores.get('space_invaders_score', 0),
+                    local_scores.get('hybrid_score', 0), local_scores.get('login_streak', 0),
+                    last_login)
+            else:
+                await self.postgres.execute("""
+                    INSERT INTO scores (user_id, updated_at) VALUES ($1, NOW())
+                """, user_id)
+            
+            # Get local settings
+            local_settings = await self.sqlite.fetchrow(
+                "SELECT * FROM user_settings WHERE user_id = $1", local_user['user_id']
+            )
+            
+            if local_settings:
+                await self.postgres.execute("""
+                    INSERT INTO user_settings (user_id, difficulty, volume, keybinds, updated_at)
+                    VALUES ($1, $2, $3, $4, NOW())
+                """, user_id, local_settings.get('difficulty', 'intermediate'),
+                    local_settings.get('volume', 100), local_settings.get('keybinds', '{}'))
+            else:
+                await self.postgres.execute("""
+                    INSERT INTO user_settings (user_id, updated_at) VALUES ($1, NOW())
+                """, user_id)
+            
+            print(f"  ↑ User '{local_user['username']}' pushed to online")
+        except Exception as e:
+            print(f"  ⚠️  Failed to push user: {e}")
+    
+    async def sync_databases(self) -> None:
+        """
+        Synchronize local SQLite and online PostgreSQL databases.
+        Compares updated_at timestamps and syncs in both directions.
+        Call this manually when you want to sync (e.g., on login, on game exit).
+        """
+        if not self.postgres or not self.postgres.is_connected:
+            print("⚠️  PostgreSQL not available, skipping sync")
+            return
+        if not self.sqlite or not self.sqlite.is_connected:
+            print("⚠️  SQLite not available, skipping sync")
+            return
+        
+        print("🔄 Synchronizing databases...")
+        
+        try:
+            await self._sync_users()
+        except Exception as e:
+            print(f"⚠️  User sync failed: {e}")
+        
+        try:
+            await self._sync_scores()
+        except Exception as e:
+            print(f"⚠️  Scores sync failed: {e}")
+        
+        try:
+            await self._sync_settings()
+        except Exception as e:
+            print(f"⚠️  Settings sync failed: {e}")
+        
+        print("✅ Database sync completed")
+    
+    async def _parse_timestamp(self, ts) -> Optional[datetime]:
+        """Parse timestamp from various formats."""
+        if ts is None:
+            return None
+        if isinstance(ts, datetime):
+            return ts
+        if isinstance(ts, str):
+            try:
+                return datetime.fromisoformat(ts.replace('Z', '+00:00'))
+            except:
+                try:
+                    return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                except:
+                    return None
+        return None
+    
+    async def _sync_users(self) -> None:
+        """Sync users table between local and online."""
+        # Get all users from both databases
+        local_users = await self.sqlite.fetch("SELECT * FROM users")
+        online_users = await self.postgres.fetch("SELECT * FROM users")
+        
+        # Create lookup by username
+        local_by_username = {u['username']: u for u in local_users}
+        online_by_username = {u['username']: u for u in online_users}
+        
+        # Sync each user
+        for username, local_user in local_by_username.items():
+            if username in online_by_username:
+                online_user = online_by_username[username]
+                local_ts = await self._parse_timestamp(local_user.get('updated_at'))
+                online_ts = await self._parse_timestamp(online_user.get('updated_at'))
+                
+                if local_ts and online_ts:
+                    if local_ts > online_ts:
+                        # Local is newer, update online
+                        await self._update_user_online(local_user, online_user['user_id'])
+                        print(f"  ↑ Synced user '{username}' to online")
+                    elif online_ts > local_ts:
+                        # Online is newer, update local
+                        await self._update_user_local(online_user, local_user['user_id'])
+                        print(f"  ↓ Synced user '{username}' to local")
+            else:
+                # User only exists locally, push to online
+                await self._create_user_online(local_user)
+                print(f"  ↑ Created user '{username}' online")
+        
+        # Users that exist only online
+        for username, online_user in online_by_username.items():
+            if username not in local_by_username:
+                await self._create_user_local(online_user)
+                print(f"  ↓ Created user '{username}' locally")
+    
+    async def _update_user_online(self, local_user: Dict, online_user_id: int) -> None:
+        """Update online user with local data."""
+        query = """
+            UPDATE users SET email = $1, password_hash = $2, updated_at = $3
+            WHERE user_id = $4
+        """
+        await self.postgres.execute(
+            query,
+            local_user['email'],
+            local_user['password_hash'],
+            datetime.now(),
+            online_user_id
+        )
+    
+    async def _update_user_local(self, online_user: Dict, local_user_id: int) -> None:
+        """Update local user with online data."""
+        query = """
+            UPDATE users SET email = $1, password_hash = $2, updated_at = $3
+            WHERE user_id = $4
+        """
+        await self.sqlite.execute(
+            query,
+            online_user['email'],
+            online_user['password_hash'],
+            datetime.now().isoformat(),
+            local_user_id
+        )
+    
+    async def _create_user_online(self, local_user: Dict) -> None:
+        """Create user on online database."""
+        # Insert user
+        query = """
+            INSERT INTO users (username, email, password_hash, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING user_id
+        """
+        created_at = local_user.get('created_at') or datetime.now()
+        if isinstance(created_at, str):
+            created_at = await self._parse_timestamp(created_at) or datetime.now()
+        
+        new_user_id = await self.postgres.fetchval(
+            query,
+            local_user['username'],
+            local_user['email'],
+            local_user['password_hash'],
+            created_at,
+            datetime.now()
+        )
+        
+        # Get local scores and settings
+        local_scores = await self.sqlite.fetchrow(
+            "SELECT * FROM scores WHERE user_id = $1", local_user['user_id']
+        )
+        local_settings = await self.sqlite.fetchrow(
+            "SELECT * FROM user_settings WHERE user_id = $1", local_user['user_id']
+        )
+        
+        # Create scores entry
+        if local_scores:
+            await self.postgres.execute("""
+                INSERT INTO scores (user_id, total_score, pacman_score, tetris_score, 
+                    snake_score, space_invaders_score, hybrid_score, login_streak, 
+                    last_login_date, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            """, new_user_id, local_scores.get('total_score', 0),
+                local_scores.get('pacman_score', 0), local_scores.get('tetris_score', 0),
+                local_scores.get('snake_score', 0), local_scores.get('space_invaders_score', 0),
+                local_scores.get('hybrid_score', 0), local_scores.get('login_streak', 0),
+                local_scores.get('last_login_date'), datetime.now())
+        else:
+            await self.postgres.execute("""
+                INSERT INTO scores (user_id, updated_at) VALUES ($1, $2)
+            """, new_user_id, datetime.now())
+        
+        # Create settings entry
+        if local_settings:
+            await self.postgres.execute("""
+                INSERT INTO user_settings (user_id, difficulty, volume, keybinds, updated_at)
+                VALUES ($1, $2, $3, $4, $5)
+            """, new_user_id, local_settings.get('difficulty', 'intermediate'),
+                local_settings.get('volume', 100), local_settings.get('keybinds', '{}'),
+                datetime.now())
+        else:
+            await self.postgres.execute("""
+                INSERT INTO user_settings (user_id, updated_at) VALUES ($1, $2)
+            """, new_user_id, datetime.now())
+    
+    async def _create_user_local(self, online_user: Dict) -> None:
+        """Create user on local database."""
+        # Insert user
+        query = """
+            INSERT INTO users (username, email, password_hash, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5)
+        """
+        created_at = online_user.get('created_at')
+        if isinstance(created_at, datetime):
+            created_at = created_at.isoformat()
+        
+        await self.sqlite.execute(
+            query,
+            online_user['username'],
+            online_user['email'],
+            online_user['password_hash'],
+            created_at or datetime.now().isoformat(),
+            datetime.now().isoformat()
+        )
+        
+        new_user_id = await self.sqlite.fetchval("SELECT last_insert_rowid()")
+        
+        # Get online scores and settings
+        online_scores = await self.postgres.fetchrow(
+            "SELECT * FROM scores WHERE user_id = $1", online_user['user_id']
+        )
+        online_settings = await self.postgres.fetchrow(
+            "SELECT * FROM user_settings WHERE user_id = $1", online_user['user_id']
+        )
+        
+        # Create scores entry
+        if online_scores:
+            last_login = online_scores.get('last_login_date')
+            if isinstance(last_login, date):
+                last_login = last_login.isoformat()
+            await self.sqlite.execute("""
+                INSERT INTO scores (user_id, total_score, pacman_score, tetris_score, 
+                    snake_score, space_invaders_score, hybrid_score, login_streak, 
+                    last_login_date, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            """, new_user_id, online_scores.get('total_score', 0),
+                online_scores.get('pacman_score', 0), online_scores.get('tetris_score', 0),
+                online_scores.get('snake_score', 0), online_scores.get('space_invaders_score', 0),
+                online_scores.get('hybrid_score', 0), online_scores.get('login_streak', 0),
+                last_login, datetime.now().isoformat())
+        else:
+            await self.sqlite.execute("""
+                INSERT INTO scores (user_id, updated_at) VALUES ($1, $2)
+            """, new_user_id, datetime.now().isoformat())
+        
+        # Create settings entry
+        if online_settings:
+            await self.sqlite.execute("""
+                INSERT INTO user_settings (user_id, difficulty, volume, keybinds, updated_at)
+                VALUES ($1, $2, $3, $4, $5)
+            """, new_user_id, online_settings.get('difficulty', 'intermediate'),
+                online_settings.get('volume', 100), online_settings.get('keybinds', '{}'),
+                datetime.now().isoformat())
+        else:
+            await self.sqlite.execute("""
+                INSERT INTO user_settings (user_id, updated_at) VALUES ($1, $2)
+            """, new_user_id, datetime.now().isoformat())
+    
+    async def _sync_scores(self) -> None:
+        """Sync scores table between local and online."""
+        # Get all scores with usernames for matching
+        local_scores = await self.sqlite.fetch("""
+            SELECT s.*, u.username FROM scores s 
+            JOIN users u ON s.user_id = u.user_id
+        """)
+        online_scores = await self.postgres.fetch("""
+            SELECT s.*, u.username FROM scores s 
+            JOIN users u ON s.user_id = u.user_id
+        """)
+        
+        local_by_username = {s['username']: s for s in local_scores}
+        online_by_username = {s['username']: s for s in online_scores}
+        
+        for username, local_score in local_by_username.items():
+            if username in online_by_username:
+                online_score = online_by_username[username]
+                local_ts = await self._parse_timestamp(local_score.get('updated_at'))
+                online_ts = await self._parse_timestamp(online_score.get('updated_at'))
+                
+                if local_ts and online_ts:
+                    if local_ts > online_ts:
+                        await self._update_scores_online(local_score, online_score['user_id'])
+                        print(f"  ↑ Synced scores for '{username}' to online")
+                    elif online_ts > local_ts:
+                        await self._update_scores_local(online_score, local_score['user_id'])
+                        print(f"  ↓ Synced scores for '{username}' to local")
+    
+    async def _update_scores_online(self, local_score: Dict, online_user_id: int) -> None:
+        """Update online scores with local data."""
+        last_login = local_score.get('last_login_date')
+        if isinstance(last_login, str) and last_login:
+            last_login = date.fromisoformat(last_login)
+        
+        await self.postgres.execute("""
+            UPDATE scores SET total_score = $1, pacman_score = $2, tetris_score = $3,
+                snake_score = $4, space_invaders_score = $5, hybrid_score = $6,
+                login_streak = $7, last_login_date = $8, updated_at = $9
+            WHERE user_id = $10
+        """, local_score.get('total_score', 0), local_score.get('pacman_score', 0),
+            local_score.get('tetris_score', 0), local_score.get('snake_score', 0),
+            local_score.get('space_invaders_score', 0), local_score.get('hybrid_score', 0),
+            local_score.get('login_streak', 0), last_login, datetime.now(), online_user_id)
+    
+    async def _update_scores_local(self, online_score: Dict, local_user_id: int) -> None:
+        """Update local scores with online data."""
+        last_login = online_score.get('last_login_date')
+        if isinstance(last_login, date):
+            last_login = last_login.isoformat()
+        
+        await self.sqlite.execute("""
+            UPDATE scores SET total_score = $1, pacman_score = $2, tetris_score = $3,
+                snake_score = $4, space_invaders_score = $5, hybrid_score = $6,
+                login_streak = $7, last_login_date = $8, updated_at = $9
+            WHERE user_id = $10
+        """, online_score.get('total_score', 0), online_score.get('pacman_score', 0),
+            online_score.get('tetris_score', 0), online_score.get('snake_score', 0),
+            online_score.get('space_invaders_score', 0), online_score.get('hybrid_score', 0),
+            online_score.get('login_streak', 0), last_login, datetime.now().isoformat(),
+            local_user_id)
+    
+    async def _sync_settings(self) -> None:
+        """Sync user_settings table between local and online."""
+        local_settings = await self.sqlite.fetch("""
+            SELECT s.*, u.username FROM user_settings s 
+            JOIN users u ON s.user_id = u.user_id
+        """)
+        online_settings = await self.postgres.fetch("""
+            SELECT s.*, u.username FROM user_settings s 
+            JOIN users u ON s.user_id = u.user_id
+        """)
+        
+        local_by_username = {s['username']: s for s in local_settings}
+        online_by_username = {s['username']: s for s in online_settings}
+        
+        for username, local_setting in local_by_username.items():
+            if username in online_by_username:
+                online_setting = online_by_username[username]
+                local_ts = await self._parse_timestamp(local_setting.get('updated_at'))
+                online_ts = await self._parse_timestamp(online_setting.get('updated_at'))
+                
+                if local_ts and online_ts:
+                    if local_ts > online_ts:
+                        await self._update_settings_online(local_setting, online_setting['user_id'])
+                        print(f"  ↑ Synced settings for '{username}' to online")
+                    elif online_ts > local_ts:
+                        await self._update_settings_local(online_setting, local_setting['user_id'])
+                        print(f"  ↓ Synced settings for '{username}' to local")
+    
+    async def _update_settings_online(self, local_setting: Dict, online_user_id: int) -> None:
+        """Update online settings with local data."""
+        await self.postgres.execute("""
+            UPDATE user_settings SET difficulty = $1, volume = $2, keybinds = $3, updated_at = $4
+            WHERE user_id = $5
+        """, local_setting.get('difficulty', 'intermediate'),
+            local_setting.get('volume', 100), local_setting.get('keybinds', '{}'),
+            datetime.now(), online_user_id)
+    
+    async def _update_settings_local(self, online_setting: Dict, local_user_id: int) -> None:
+        """Update local settings with online data."""
+        await self.sqlite.execute("""
+            UPDATE user_settings SET difficulty = $1, volume = $2, keybinds = $3, updated_at = $4
+            WHERE user_id = $5
+        """, online_setting.get('difficulty', 'intermediate'),
+            online_setting.get('volume', 100), online_setting.get('keybinds', '{}'),
+            datetime.now().isoformat(), local_user_id)
     
     async def disconnect(self) -> None:
         """Close all database connections."""
@@ -497,8 +1034,28 @@ class DatabaseManager:
     
     async def create_user(self, username: str, email: str, password_hash: str) -> Optional[int]:
         """Create a new user account. Returns user_id if successful."""
-        # SQLite doesn't support RETURNING well, so handle differently
-        if self.using_local:
+        # Use PostgreSQL path if production is active, otherwise SQLite
+        if self.using_production:
+            # PostgreSQL path
+            query = """
+                INSERT INTO users (username, email, password_hash, created_at, updated_at)
+                VALUES ($1, $2, $3, NOW(), NOW())
+                RETURNING user_id
+            """
+            try:
+                user_id = await self.fetchval(query, username, email, password_hash)
+                await self._init_user_data(user_id)
+                
+                # Also save to local SQLite backup
+                if self.sqlite and self.sqlite.is_connected:
+                    await self._backup_user_to_local(username, email, password_hash)
+                
+                return user_id
+            except Exception as e:
+                print(f"Error creating user: {e}")
+                return None  # Username or email already exists
+        else:
+            # SQLite only path
             try:
                 check_query = "SELECT user_id FROM users WHERE username = $1 OR email = $2"
                 existing = await self.fetchrow(check_query, username, email)
@@ -506,10 +1063,10 @@ class DatabaseManager:
                     return None  # Already exists
                 
                 insert_query = """
-                    INSERT INTO users (username, email, password_hash)
-                    VALUES ($1, $2, $3)
+                    INSERT INTO users (username, email, password_hash, updated_at)
+                    VALUES ($1, $2, $3, $4)
                 """
-                await self.execute(insert_query, username, email, password_hash)
+                await self.execute(insert_query, username, email, password_hash, datetime.now().isoformat())
                 
                 # Get the last inserted ID
                 user_id = await self.fetchval("SELECT last_insert_rowid()")
@@ -518,33 +1075,63 @@ class DatabaseManager:
             except Exception as e:
                 print(f"Error creating user: {e}")
                 return None
-        else:
-            # PostgreSQL path
-            query = """
-                INSERT INTO users (username, email, password_hash, created_at)
-                VALUES ($1, $2, $3, NOW())
-                RETURNING user_id
-            """
-            try:
-                user_id = await self.fetchval(query, username, email, password_hash)
-                await self._init_user_data(user_id)
-                return user_id
-            except Exception:
-                return None  # Username or email already exists
+    
+    async def _backup_user_to_local(self, username: str, email: str, password_hash: str) -> None:
+        """Backup user to local SQLite database."""
+        try:
+            now_str = datetime.now().isoformat()
+            
+            # Check if user already exists locally
+            existing = await self.sqlite.fetchrow(
+                "SELECT user_id FROM users WHERE username = $1", username
+            )
+            if existing:
+                return  # Already backed up
+            
+            # Insert user
+            await self.sqlite.execute("""
+                INSERT INTO users (username, email, password_hash, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5)
+            """, username, email, password_hash, now_str, now_str)
+            
+            # Get local user_id
+            local_user_id = await self.sqlite.fetchval("SELECT last_insert_rowid()")
+            
+            # Initialize scores and settings
+            await self.sqlite.execute("""
+                INSERT INTO scores (user_id, total_score, pacman_score, tetris_score,
+                    snake_score, space_invaders_score, hybrid_score, login_streak, last_login_date, updated_at)
+                VALUES ($1, 0, 0, 0, 0, 0, 0, 0, NULL, $2)
+            """, local_user_id, now_str)
+            
+            await self.sqlite.execute("""
+                INSERT INTO user_settings (user_id, difficulty, volume, keybinds, updated_at)
+                VALUES ($1, 'intermediate', 100, '{}', $2)
+            """, local_user_id, now_str)
+            
+            print(f"💾 User backed up to local database")
+        except Exception as e:
+            print(f"⚠️  Local backup failed: {e}")
     
     async def _init_user_data(self, user_id: int) -> None:
         """Initialize default scores and settings for new user."""
+        # Use datetime object for PostgreSQL, ISO string for SQLite
+        if self.using_production:
+            now_val = datetime.now()
+        else:
+            now_val = datetime.now().isoformat()
+        
         scores_query = """
             INSERT INTO scores (user_id, total_score, pacman_score, tetris_score, 
-                              snake_score, space_invaders_score, hybrid_score, login_streak, last_login_date)
-            VALUES ($1, 0, 0, 0, 0, 0, 0, 0, NULL)
+                              snake_score, space_invaders_score, hybrid_score, login_streak, last_login_date, updated_at)
+            VALUES ($1, 0, 0, 0, 0, 0, 0, 0, NULL, $2)
         """
         settings_query = """
-            INSERT INTO user_settings (user_id, difficulty, volume, keybinds)
-            VALUES ($1, 'intermediate', 100, '{}')
+            INSERT INTO user_settings (user_id, difficulty, volume, keybinds, updated_at)
+            VALUES ($1, 'intermediate', 100, '{}', $2)
         """
-        await self.execute(scores_query, user_id)
-        await self.execute(settings_query, user_id)
+        await self.execute(scores_query, user_id, now_val)
+        await self.execute(settings_query, user_id, now_val)
     
     async def get_user_by_username(self, username: str) -> Optional[Dict]:
         """Get user by username."""
@@ -592,12 +1179,36 @@ class DatabaseManager:
                 new_streak = 1
         
         # Update streak and last login
-        query = """
-            UPDATE scores 
-            SET login_streak = $1, last_login_date = $2
-            WHERE user_id = $3
-        """
-        await self.execute(query, new_streak, today.isoformat(), user_id)
+        # Use proper types based on backend
+        if self.using_production:
+            # PostgreSQL expects date and timestamp objects
+            query = """
+                UPDATE scores 
+                SET login_streak = $1, last_login_date = $2, updated_at = $3
+                WHERE user_id = $4
+            """
+            await self.execute(query, new_streak, today, datetime.now(), user_id)
+        else:
+            # SQLite uses strings
+            query = """
+                UPDATE scores 
+                SET login_streak = $1, last_login_date = $2, updated_at = $3
+                WHERE user_id = $4
+            """
+            await self.execute(query, new_streak, today.isoformat(), datetime.now().isoformat(), user_id)
+        
+        # Also update on backup database if using production
+        if self.using_production and self.sqlite and self.sqlite.is_connected:
+            try:
+                backup_query = """
+                    UPDATE scores 
+                    SET login_streak = $1, last_login_date = $2, updated_at = $3
+                    WHERE user_id = $4
+                """
+                await self.sqlite.execute(backup_query, new_streak, today.isoformat(), datetime.now().isoformat(), user_id)
+            except Exception:
+                pass
+        
         return new_streak
     
     # ========== SCORE MANAGEMENT ==========
@@ -633,9 +1244,15 @@ class DatabaseManager:
             current_high = 0
         
         if score > current_high:
-            # Update game score
-            update_query = f"UPDATE scores SET {game_col} = $1 WHERE user_id = $2"
-            await backend.execute(update_query, score, user_id)
+            # Determine the timestamp format based on backend
+            if isinstance(backend, SQLiteBackend):
+                now_str = datetime.now().isoformat()
+            else:
+                now_str = datetime.now()
+            
+            # Update game score with updated_at timestamp
+            update_query = f"UPDATE scores SET {game_col} = $1, updated_at = $2 WHERE user_id = $3"
+            await backend.execute(update_query, score, now_str, user_id)
             
             # Recalculate total score (sum of all game high scores)
             total_query = """
@@ -698,9 +1315,26 @@ class DatabaseManager:
                 param_num += 1
         
         if updates:
+            # Add updated_at timestamp
+            now_str = datetime.now().isoformat() if self.using_local and not self.using_production else datetime.now()
+            updates.append(f"updated_at = ${param_num}")
+            values.append(now_str)
+            param_num += 1
+            
             values.append(user_id)
             query = f"UPDATE user_settings SET {', '.join(updates)} WHERE user_id = ${param_num}"
             await self.execute(query, *values)
+            
+            # Also update on backup database if using production
+            if self.using_production and self.sqlite and self.sqlite.is_connected:
+                try:
+                    # Reset for SQLite with string timestamp
+                    sqlite_values = values[:-2]  # Remove the datetime and user_id
+                    sqlite_values.append(datetime.now().isoformat())
+                    sqlite_values.append(user_id)
+                    await self.sqlite.execute(query, *sqlite_values)
+                except Exception:
+                    pass
 
 
 # Global instance (initialized in main.py)
