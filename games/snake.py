@@ -8,8 +8,8 @@ from systems.collision import point_in_grid
 
 @register_game("snake")
 class SnakeGame(BaseGame):
-    def __init__(self, screen: pygame.Surface, cfg, sounds):
-        super().__init__(screen, cfg, sounds)
+    def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
+        super().__init__(screen, cfg, sounds, user_id=user_id)
         self.rules = get_rules("snake").data
         self.grid_w, self.grid_h = self.rules["grid_size"]
         self.direction = (1, 0)
@@ -53,7 +53,7 @@ class SnakeGame(BaseGame):
         self.apple = random.choice(free) if free else (0, 0)
 
     def handle_event(self, event: pygame.event.Event) -> None:
-        # While game over, handle only overlay clicks
+        # While game over, only clicks are processed
         if self.game_over:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
@@ -69,14 +69,25 @@ class SnakeGame(BaseGame):
 
         if event.type != pygame.KEYDOWN:
             return
+        
+        # Prevent 180° turns into itself
+        new_direction = None
         if event.key in (pygame.K_LEFT, pygame.K_a):
-            self.direction = (-1, 0)
+            new_direction = (-1, 0)
         elif event.key in (pygame.K_RIGHT, pygame.K_d):
-            self.direction = (1, 0)
+            new_direction = (1, 0)
         elif event.key in (pygame.K_UP, pygame.K_w):
-            self.direction = (0, -1)
+            new_direction = (0, -1)
         elif event.key in (pygame.K_DOWN, pygame.K_s):
-            self.direction = (0, 1)
+            new_direction = (0, 1)
+        
+        # Only change direction if it's not opposite to current direction
+        if new_direction is not None:
+            dx, dy = self.direction
+            ndx, ndy = new_direction
+            # Check if new direction is not 180° opposite
+            if not (dx == -ndx and dy == -ndy):
+                self.direction = new_direction
 
     def update(self, dt: float) -> None:
         if self.game_over:
@@ -91,6 +102,7 @@ class SnakeGame(BaseGame):
         # Collision with walls or self → Game Over
         if not point_in_grid(new_head, (self.grid_w, self.grid_h)) or new_head in self.snake:
             self.game_over = True
+            self.save_score()  # Save score to database
             return
         self.snake.insert(0, new_head)
         if new_head == self.apple:
@@ -194,7 +206,6 @@ class SnakeGame(BaseGame):
     def draw_scoreboard(self) -> None:
         # Small apple icon + count at top-left
         x, y = self.hud_pos
-        # Icon background (subtle for readability)
         # Draw apple body
         apple_rect = pygame.Rect(x, y, 26, 26)
         pygame.draw.ellipse(self.screen, (214, 76, 50), apple_rect)

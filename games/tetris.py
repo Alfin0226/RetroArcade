@@ -4,7 +4,6 @@ import pygame
 from . import BaseGame, register_game
 from systems.rules import get_rules
 from systems.scoring import ScoreEvent, tetris_score
-from . import save_game_score
 
 TETROMINOES = {
     "I": [(0, 0), (1, 0), (2, 0), (3, 0)],
@@ -28,8 +27,8 @@ SHAPE_COLORS = {
 
 @register_game("tetris")
 class TetrisGame(BaseGame):
-    def __init__(self, screen: pygame.Surface, cfg, sounds):
-        super().__init__(screen, cfg, sounds)
+    def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
+        super().__init__(screen, cfg, sounds, user_id=user_id)
         self.rules = get_rules("tetris").data
         self.grid_width, self.grid_height = self.rules["grid_size"]
         self.grid = [[0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
@@ -51,6 +50,10 @@ class TetrisGame(BaseGame):
         # Game over UI
         self.game_over: bool = False
         self.go_button_rects: list[tuple[str, pygame.Rect]] = []
+        
+        # Space bar hold protection
+        self.space_pressed: bool = False
+        
         # Line clear animation state
         self.clearing_rows: list[int] = []
         self.clearing: bool = False
@@ -68,6 +71,7 @@ class TetrisGame(BaseGame):
         self.next_shape_key = random.choice(list(TETROMINOES.keys()))
         self.game_over = False
         self.go_button_rects.clear()
+        self.space_pressed = False
         # Reset animation state
         self.clearing_rows = []
         self.clearing = False
@@ -80,9 +84,10 @@ class TetrisGame(BaseGame):
         self.next_shape_key = random.choice(list(TETROMINOES.keys()))
         self.current_piece = list(TETROMINOES[self.current_shape_key])
         self.piece_pos = [self.grid_width // 2 - 2, 0]
-        # If spawn position is blocked -> Game Over
+        # If spawn position is blocked then is Game Over
         if not self.can_move(0, 0, self.current_piece, self.piece_pos):
             self.game_over = True
+            self.save_score()  # Save score to database
             return
 
     def can_move(self, dx: int, dy: int, piece: list[tuple[int, int]] | None = None, pos: list[int] | None = None) -> bool:
@@ -113,10 +118,11 @@ class TetrisGame(BaseGame):
     def lock_piece(self) -> None:
         # Merge piece into grid
         px, py = self.piece_pos
+        color = SHAPE_COLORS.get(self.current_shape_key, (200, 120, 255))
         for x, y in self.current_piece:
             gx, gy = px + x, py + y
             if 0 <= gx < self.grid_width and 0 <= gy < self.grid_height:
-                self.grid[gy][gx] = 1  # store as filled
+                self.grid[gy][gx] = color  # store the color
 
         # Prepare animation if there are full rows
         full_rows = [y for y, row in enumerate(self.grid) if all(cell != 0 for cell in row)]
@@ -171,7 +177,7 @@ class TetrisGame(BaseGame):
         # Block input while clearing animation runs
         if self.clearing:
             return
-        # ...existing key handling (WASD + Space hard drop)...
+        # key handling (WASD/Arrow Keys+ Space hard drop)
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_LEFT, pygame.K_a):
                 if self.can_move(-1, 0):
@@ -184,10 +190,14 @@ class TetrisGame(BaseGame):
             elif event.key in (pygame.K_UP, pygame.K_w):
                 self.try_rotate()
             elif event.key == pygame.K_SPACE:
-                self.hard_drop()
+                if not self.space_pressed:
+                    self.space_pressed = True
+                    self.hard_drop()
         elif event.type == pygame.KEYUP:
             if event.key in (pygame.K_DOWN, pygame.K_s):
                 self.soft_drop = False
+            elif event.key == pygame.K_SPACE:
+                self.space_pressed = False
 
     def update(self, dt: float) -> None:
         if self.game_over:
@@ -214,7 +224,10 @@ class TetrisGame(BaseGame):
         ox, oy = self.offset_x, self.offset_y
         for y, row in enumerate(self.grid):
             for x, value in enumerate(row):
-                base_color = (30, 30, 50) if value == 0 else (90, 200, 255)
+                if value == 0:
+                    base_color = (30, 30, 50)
+                else:
+                    base_color = value  # value is the stored color tuple
                 pygame.draw.rect(
                     self.screen, base_color,
                     pygame.Rect(ox + x * cell, oy + y * cell, cell - 1, cell - 1),
@@ -233,9 +246,9 @@ class TetrisGame(BaseGame):
                 s.fill(overlay_color)
                 self.screen.blit(s, row_rect.topleft)
 
-        # Current piece (single consistent color) — not drawn during clearing
-        if self.current_piece:
-            color = (200, 120, 255)
+        # Current piece (use shape's color) — not drawn during clearing
+        if self.current_piece and self.current_shape_key:
+            color = SHAPE_COLORS.get(self.current_shape_key, (200, 120, 255))
             for x, y in self.current_piece:
                 px = ox + (self.piece_pos[0] + x) * cell
                 py = oy + (self.piece_pos[1] + y) * cell
@@ -260,10 +273,10 @@ class TetrisGame(BaseGame):
         box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
         pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=8)
         pygame.draw.rect(self.screen, (140, 150, 190), box, width=2, border_radius=8)
-        # Draw next shape centered in box (single consistent color)
+        # Draw next shape centered in box (use shape's color)
         if self.next_shape_key:
             pts = TETROMINOES[self.next_shape_key]
-            color = (200, 120, 255)
+            color = SHAPE_COLORS.get(self.next_shape_key, (200, 120, 255))
             # normalize shape to start near (0,0)
             minx = min(x for x, _ in pts)
             miny = min(y for _, y in pts)

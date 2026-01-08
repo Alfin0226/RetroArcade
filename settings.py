@@ -23,10 +23,12 @@ class DatabaseConfig:
     password: str = os.getenv("DB_PASSWORD", "")
     # For Neon, you can also use a full connection string
     connection_string: str = os.getenv("DATABASE_URL", "")
+    # Local SQLite database path (used as fallback)
+    local_db_path: str = os.getenv("LOCAL_DB_PATH", str(DATA_DIR / "arcade.db"))
     
     @property
     def is_configured(self) -> bool:
-        """Check if database is configured (either via connection string or individual params)."""
+        """Check if production database is configured (either via connection string or individual params)."""
         return bool(self.connection_string or (self.host and self.database and self.user))
 
 @dataclass

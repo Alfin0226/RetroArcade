@@ -1,65 +1,89 @@
 from __future__ import annotations
-import sqlite3
-from pathlib import Path
 from typing import Optional, Dict
 import bcrypt
-from settings import DATA_DIR
+import asyncio
 
-DB_PATH = DATA_DIR / "users.db"
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    username TEXT PRIMARY KEY,
-    password_hash BLOB NOT NULL
-);
-CREATE TABLE IF NOT EXISTS progress (
-    username TEXT NOT NULL,
-    game TEXT NOT NULL,
-    score INTEGER NOT NULL,
-    PRIMARY KEY (username, game),
-    FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
-);
-"""
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt."""
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-def _connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.executescript(SCHEMA)
-    return conn
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash."""
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+
+
+async def register_user_async(db, username: str, email: str, password: str) -> Optional[int]:
+    """
+    Register a new user with username, email and password.
+    Returns user_id if successful, None if username/email already exists.
+    """
+    password_hash = hash_password(password)
+    return await db.create_user(username, email, password_hash)
+
+
+async def login_user_async(db, identifier: str, password: str) -> Optional[Dict]:
+    """
+    Login user with username OR email and password.
+    Returns user data dict if successful, None otherwise.
+    """
+    # Try to find user by username first
+    user = await db.get_user_by_username(identifier)
+    
+    # If not found, try by email
+    if not user:
+        user = await db.get_user_by_email(identifier)
+    
+    if not user:
+        return None
+    
+    # Verify password
+    if verify_password(password, user['password_hash']):
+        # Update login streak
+        await db.update_login_streak(user['user_id'])
+        return user
+    
+    return None
+
 
 def register_user(username: str, password: str) -> bool:
-    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
-    with _connect() as conn:
-        try:
-            conn.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed))
-        except sqlite3.IntegrityError:
-            return False
-    return True
+    """Legacy sync register (deprecated - use register_user_async)."""
+    # This is kept for backward compatibility
+    return False
+
 
 def login_user(username: str, password: str) -> bool:
-    with _connect() as conn:
-        row = conn.execute("SELECT password_hash FROM users WHERE username = ?", (username,)).fetchone()
-    if not row:
-        return False
-    return bcrypt.checkpw(password.encode("utf-8"), row[0])
+    """Legacy sync login (deprecated - use login_user_async)."""
+    # This is kept for backward compatibility  
+    return False
 
-def save_progress(username: str, game: str, score: int) -> None:
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO progress (username, game, score)
-            VALUES (?, ?, ?)
-            ON CONFLICT(username, game) DO UPDATE SET score = MAX(score, excluded.score)
-            """,
-            (username, game, score),
-        )
 
-def load_progress(username: str) -> Dict[str, int]:
-    with _connect() as conn:
-        rows = conn.execute("SELECT game, score FROM progress WHERE username = ?", (username,)).fetchall()
-    return {game: score for game, score in rows}
+class UserSession:
+    """Holds the current logged-in user's session data."""
+    
+    def __init__(self):
+        self.user_id: Optional[int] = None
+        self.username: Optional[str] = None
+        self.email: Optional[str] = None
+        self.is_logged_in: bool = False
+    
+    def login(self, user_data: Dict) -> None:
+        """Set session from user data dict."""
+        self.user_id = user_data.get('user_id')
+        self.username = user_data.get('username')
+        self.email = user_data.get('email')
+        self.is_logged_in = True
+    
+    def logout(self) -> None:
+        """Clear session data."""
+        self.user_id = None
+        self.username = None
+        self.email = None
+        self.is_logged_in = False
+    
+    def __repr__(self) -> str:
+        if self.is_logged_in:
+            return f"UserSession(user={self.username}, id={self.user_id})"
+        return "UserSession(logged_out)"
 
-def reset_account(username: str) -> None:
-    with _connect() as conn:
-        conn.execute("DELETE FROM progress WHERE username = ?", (username,))
-        conn.execute("DELETE FROM users WHERE username = ?", (username,))

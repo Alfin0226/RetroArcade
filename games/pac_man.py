@@ -34,7 +34,7 @@ FRUIT_TABLE = [
     (99, "Key", 5000),
 ]
 
-# Classic Pac-Man maze layout from reference image
+# Classic Pac-Man maze layout
 RAW_MAP = """
 ############################
 #............##............#
@@ -86,8 +86,8 @@ class Ghost:
 
 @register_game("pac_man")
 class PacManGame(BaseGame):
-    def __init__(self, screen: pygame.Surface, cfg, sounds):
-        super().__init__(screen, cfg, sounds)
+    def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
+        super().__init__(screen, cfg, sounds, user_id=user_id)
         (
             self.grid,
             self.pellets,
@@ -388,6 +388,7 @@ class PacManGame(BaseGame):
                 if self.lives <= 0:
                     self.game_over = True
                     self.go_button_rects.clear()
+                    self.save_score()  # Save score to database
                 else:
                     self._restart_level(full_reset=False)
             return
@@ -513,6 +514,7 @@ class PacManGame(BaseGame):
             self.win = True
             self.completion_time = self.level_time
             self.go_button_rects.clear()
+            self.save_score()  # Save score to database when player wins
             return
 
     def _step_player(self) -> None:

@@ -1,25 +1,35 @@
 """
 Run this script once to set up the database tables.
 Usage: python init_db.py
+
+The database manager will:
+1. Try to connect to PostgreSQL (production) first
+2. Fall back to local SQLite if PostgreSQL is unavailable
 """
 import asyncio
 from database import DatabaseManager
 from settings import Settings
 
 async def main():
-    print("🔧 Initializing database with users, scores, and user_settings tables...")
+    print("🔧 Initializing database...")
+    print("   Priority: Production (PostgreSQL) → Local (SQLite)")
+    print()
+    
     cfg = Settings()
-    
-    if not cfg.db.is_configured:
-        print("❌ Database not configured. Please check your .env file.")
-        return
-    
     db = DatabaseManager(cfg.db)
     
     try:
         await db.connect()
-        await db.init_schema()
-        print("✅ Database setup complete!")
+        
+        if not db.is_connected:
+            print("❌ Failed to connect to any database!")
+            return
+        
+        # Initialize schema (only needed for PostgreSQL, SQLite auto-inits on connect)
+        if db.using_production:
+            await db.init_schema()
+        
+        print(f"\n✅ Database setup complete! Using: {db.backend_name}")
         
         # Test user creation
         print("\n🧪 Testing user registration...")

@@ -6,8 +6,10 @@ from settings import Settings, ensure_directories, init_pygame_window
 from systems.sound_manager import SoundManager
 from games import GAME_REGISTRY
 from leaderboard import LeaderboardView
-from user import login_user, register_user
-from database import DatabaseManager, db as global_db
+from user import UserSession
+import database
+from database import DatabaseManager
+from login_register_menu import LoginRegisterMenu
 
 MENU_OPTIONS = ["snake", "tetris", "pac_man", "space_invaders", "hybrid", "leaderboard", "quit"]
 
@@ -22,7 +24,7 @@ class ArcadeApp:
         self.font = pygame.font.SysFont("arial", 28)
         self.sounds = SoundManager()
         self.load_sounds()
-        self.state = "menu"
+        self.state = "login"  # Start with login screen
         self.menu_index = 0
         self.active_game = None
         self.username = ""
@@ -33,22 +35,32 @@ class ArcadeApp:
         self.pause_button_rects: list[tuple[str, pygame.Rect]] = []
         # Settings UI
         self.menu_settings_rect: pygame.Rect | None = None
+        self.menu_login_rect: pygame.Rect | None = None  # Top-left login/logout button
         self.settings_button_rects: list[tuple[str, pygame.Rect]] = []
         self.settings_return_state: str = "menu"  # "menu" or "pause"
         # Remember last windowed size when toggling fullscreen
         self.windowed_size = self.cfg.screen_size
         self.db: DatabaseManager | None = None
         asyncio.run(self._init_database())
+        # Login/Register menu
+        self.login_menu: LoginRegisterMenu | None = None
+        self.session: UserSession = UserSession()
+        self._init_login_menu()
 
     async def _init_database(self):
         """Initialize database connection asynchronously."""
         self.db = DatabaseManager(self.cfg.db)
         await self.db.connect()
-        global global_db
-        global_db = self.db
+        # Update the module-level db variable so games can access it
+        database.db = self.db
+
+    def _init_login_menu(self):
+        """Initialize the login/register menu."""
+        if self.db:
+            self.login_menu = LoginRegisterMenu(self.screen, self.cfg, self.font, self.db)
 
     def load_sounds(self) -> None:
-        self.sounds.load_sound("eat", "eat.wav")
+        self.sounds.load_sound("eat", "eat.mp3")
         self.sounds.load_sound("shoot", "shoot.wav")
         self.sounds.load_sound("power_up", "power_up.wav")
         self.sounds.load_sound("line_clear", "line_clear.wav")
@@ -78,7 +90,9 @@ class ArcadeApp:
             self.cleanup()
 
     def handle_event(self, event: pygame.event.Event) -> None:
-        if self.state == "menu":
+        if self.state == "login":
+            self.handle_login_event(event)
+        elif self.state == "menu":
             self.handle_menu_event(event)
         elif self.state == "game" and self.active_game:
             # Toggle pause on ESC
@@ -98,10 +112,26 @@ class ArcadeApp:
             else:
                 self.active_game.handle_event(event)
         elif self.state == "leaderboard":
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            result = self.leaderboard.handle_event(event)
+            if result == "back":
                 self.state = "menu"
         elif self.state == "settings":
             self.handle_settings_event(event)
+
+    def handle_login_event(self, event: pygame.event.Event) -> None:
+        """Handle events for the login/register menu."""
+        if self.login_menu:
+            result = self.login_menu.handle_event(event)
+            if result == "logged_in":
+                # User logged in successfully
+                self.session = self.login_menu.session
+                self.username = self.session.username or ""
+                self.state = "menu"
+            elif result == "guest":
+                # Continue as guest
+                self.session = self.login_menu.session
+                self.username = "Guest"
+                self.state = "menu"
 
     def handle_menu_event(self, event: pygame.event.Event) -> None:
         # Ensure rects exist for hit-testing
@@ -124,6 +154,16 @@ class ArcadeApp:
                 self.settings_return_state = "menu"
                 self.state = "settings"
                 return
+            # Top-left login/logout button
+            if self.menu_login_rect and self.menu_login_rect.collidepoint(mx, my):
+                if self.session.is_logged_in:
+                    self.do_logout()
+                else:
+                    # Guest mode - go to login screen
+                    self.state = "login"
+                    if self.login_menu:
+                        self.login_menu.reset()
+                return
             # Menu buttons
             for option, rect in self.menu_button_rects:
                 if rect.collidepoint(mx, my):
@@ -136,19 +176,34 @@ class ArcadeApp:
                         self.start_game(option)
                     break
 
+    def do_logout(self) -> None:
+        """Log out the current user and return to login screen."""
+        self.session.logout()
+        self.username = ""
+        if self.login_menu:
+            self.login_menu.reset()
+        self.state = "login"
+
     def start_game(self, key: str) -> None:
         GameClass = GAME_REGISTRY[key]
-        self.active_game = GameClass(self.screen, self.cfg, self.sounds)
+        # Pass user_id for score tracking (None for guests)
+        user_id = self.session.user_id if self.session.is_logged_in else None
+        self.active_game = GameClass(self.screen, self.cfg, self.sounds, user_id=user_id)
         self.active_game.start()
         self.state = "game"
 
     def update(self, dt: float) -> None:
-        if self.state == "game" and self.active_game:
+        if self.state == "login" and self.login_menu:
+            self.login_menu.update(dt)
+        elif self.state == "game" and self.active_game:
             if not self.paused:
                 self.active_game.update(dt)
 
     def draw(self) -> None:
-        if self.state == "menu":
+        if self.state == "login":
+            if self.login_menu:
+                self.login_menu.draw()
+        elif self.state == "menu":
             self.draw_menu()
         elif self.state == "game" and self.active_game:
             self.screen.fill((10, 10, 24))
@@ -186,6 +241,10 @@ class ArcadeApp:
         self.screen = init_pygame_window(self.cfg)
         # Update references that draw onto the screen
         self.leaderboard.screen = self.screen
+        if self.login_menu:
+            self.login_menu.screen = self.screen
+            self.login_menu.cfg = self.cfg
+            self.login_menu.fields_built = False  # Rebuild fields for new size
         if self.active_game:
             self.active_game.screen = self.screen
             self.active_game.cfg = self.cfg
@@ -331,10 +390,28 @@ class ArcadeApp:
         y = padding
         return pygame.Rect(x, y, w, h)
 
+    def build_menu_login_button(self) -> pygame.Rect:
+        # Size and position for top-left login/logout button
+        padding = 14
+        # Show "Logout" if logged in, "Login" if guest
+        label = "Logout" if self.session.is_logged_in else "Login"
+        text_surf = self.font.render(label, True, (255, 255, 255))
+        tw, th = text_surf.get_size()
+        w, h = max(140, tw + 24), th + 14
+        x = padding
+        y = padding
+        return pygame.Rect(x, y, w, h)
+
     def draw_menu(self) -> None:
         self.screen.fill((20, 20, 50))
         title = self.font.render("Retro Arcade Game", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, 80))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, 60))
+        
+        # Show logged-in user info
+        if self.username:
+            user_text = f"Welcome, {self.username}!"
+            user_surf = self.font.render(user_text, True, (150, 200, 150))
+            self.screen.blit(user_surf, (self.cfg.width // 2 - user_surf.get_width() // 2, 110))
 
         # Rebuild each frame to adapt to window size/font metrics
         self.build_menu_buttons()
@@ -359,7 +436,7 @@ class ArcadeApp:
             text_y = rect.y + (rect.height - text_h) // 2
             self.screen.blit(text_surf, (text_x, text_y))
 
-        # Draw or update menu settings button
+        # Draw or update menu settings button (top-right)
         self.menu_settings_rect = self.build_menu_settings_button()
         hovered = self.menu_settings_rect.collidepoint(*pygame.mouse.get_pos())
         fill = (70, 80, 120) if hovered else (40, 45, 85)
@@ -371,10 +448,23 @@ class ArcadeApp:
         ty = self.menu_settings_rect.y + (self.menu_settings_rect.height - text.get_height()) // 2
         self.screen.blit(text, (tx, ty))
 
+        # Draw login/logout button (top-left)
+        self.menu_login_rect = self.build_menu_login_button()
+        login_label = "Logout" if self.session.is_logged_in else "Login"
+        hovered = self.menu_login_rect.collidepoint(*pygame.mouse.get_pos())
+        fill = (70, 80, 120) if hovered else (40, 45, 85)
+        border = (255, 255, 255) if hovered else (140, 150, 190)
+        pygame.draw.rect(self.screen, fill, self.menu_login_rect, border_radius=8)
+        pygame.draw.rect(self.screen, border, self.menu_login_rect, width=2, border_radius=8)
+        text = self.font.render(login_label, True, (255, 255, 255))
+        tx = self.menu_login_rect.x + (self.menu_login_rect.width - text.get_width()) // 2
+        ty = self.menu_login_rect.y + (self.menu_login_rect.height - text.get_height()) // 2
+        self.screen.blit(text, (tx, ty))
+
     def build_menu_buttons(self) -> None:
         # Compute and cache menu button rects for mouse hit-testing
         self.menu_button_rects.clear()
-        base_y = 180
+        base_y = 160
         spacing = 52
         padding_x = 18
         padding_y = 10
