@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 import pygame
+from typing import Literal
 
 BASE_DIR = Path(__file__).resolve().parent
 ASSET_DIR = BASE_DIR / "assets"
@@ -12,6 +13,9 @@ DATA_DIR = BASE_DIR / "data"
 
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / ".env")
+
+# Type alias for difficulty
+DifficultyLevel = Literal["easy", "intermediate", "hard"]
 
 @dataclass
 class DatabaseConfig:
@@ -32,6 +36,14 @@ class DatabaseConfig:
         return bool(self.connection_string or (self.host and self.database and self.user))
 
 @dataclass
+class AudioSettings:
+    """Audio configuration settings."""
+    master_volume: float = 0.7  # 0.0 to 1.0
+    music_volume: float = 0.5  # 0.0 to 1.0
+    sfx_volume: float = 0.7  # 0.0 to 1.0
+    muted: bool = False
+
+@dataclass
 class Settings:
     width: int = 960
     height: int = 720
@@ -46,9 +58,20 @@ class Settings:
     # Database configuration
     db: DatabaseConfig = None
     
+    # Audio settings
+    audio: AudioSettings = None
+    
+    # Difficulty setting
+    difficulty: DifficultyLevel = "intermediate"
+    
+    # Debug/display settings
+    show_fps: bool = False
+    
     def __post_init__(self):
         if self.db is None:
             self.db = DatabaseConfig()
+        if self.audio is None:
+            self.audio = AudioSettings()
 
     @property
     def screen_size(self) -> tuple[int, int]:

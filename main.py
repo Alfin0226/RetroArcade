@@ -4,6 +4,7 @@ import pygame
 import asyncio
 from settings import Settings, ensure_directories, init_pygame_window
 from systems.sound_manager import SoundManager
+from systems.rules import set_difficulty, get_difficulty
 from games import GAME_REGISTRY
 from leaderboard import LeaderboardView
 from user import UserSession
@@ -13,6 +14,7 @@ from login_register_menu import LoginRegisterMenu
 from async_helper import run_async, stop_async_loop
 
 MENU_OPTIONS = ["snake", "tetris", "pac_man", "space_invaders", "hybrid", "leaderboard", "quit"]
+DIFFICULTY_OPTIONS = ["easy", "intermediate", "hard"]
 
 class ArcadeApp:
     def __init__(self):
@@ -38,7 +40,9 @@ class ArcadeApp:
         self.menu_settings_rect: pygame.Rect | None = None
         self.menu_login_rect: pygame.Rect | None = None  # Top-left login/logout button
         self.settings_button_rects: list[tuple[str, pygame.Rect]] = []
+        self.settings_slider_rects: dict[str, tuple[pygame.Rect, pygame.Rect]] = {}  # label_rect, slider_rect
         self.settings_return_state: str = "menu"  # "menu" or "pause"
+        self.dragging_slider: str | None = None  # Which slider is being dragged
         # Remember last windowed size when toggling fullscreen
         self.windowed_size = self.cfg.screen_size
         self.db: DatabaseManager | None = None
@@ -61,13 +65,32 @@ class ArcadeApp:
             self.login_menu = LoginRegisterMenu(self.screen, self.cfg, self.font, self.db)
 
     def load_sounds(self) -> None:
+        # Load all default sounds
+        self.sounds.load_assets()
+        # Also load specific sounds that might have different filenames
         self.sounds.load_sound("eat", "eat.mp3")
         self.sounds.load_sound("shoot", "shoot.wav")
         self.sounds.load_sound("power_up", "power_up.wav")
         self.sounds.load_sound("line_clear", "line_clear.wav")
         self.sounds.load_sound("game_over", "game_over.wav")
         self.sounds.load_music("bg_music.mp3")
+        # Apply initial volume settings
+        self.sounds.set_volume(self.cfg.audio.sfx_volume)
+        self.sounds.set_music_volume(self.cfg.audio.music_volume)
+        self.sounds.set_muted(self.cfg.audio.muted)
         self.sounds.play_music()
+
+    def _draw_fps(self) -> None:
+        """Draw FPS counter in bottom-left corner."""
+        fps = int(self.clock.get_fps())
+        fps_text = self.font.render(f"FPS: {fps}", True, (0, 255, 0))
+        # Position in bottom-left corner
+        x = 14
+        y = self.cfg.height - fps_text.get_height() - 14
+        # Draw background for readability
+        bg_rect = pygame.Rect(x - 4, y - 2, fps_text.get_width() + 8, fps_text.get_height() + 4)
+        pygame.draw.rect(self.screen, (0, 0, 0, 150), bg_rect, border_radius=4)
+        self.screen.blit(fps_text, (x, y))
 
     def cleanup(self):
         """Clean up resources before exit."""
@@ -87,6 +110,8 @@ class ArcadeApp:
                     self.handle_event(event)
                 self.update(dt)
                 self.draw()
+                if self.cfg.show_fps:
+                    self._draw_fps()
                 pygame.display.flip()
         finally:
             self.cleanup()
@@ -321,39 +346,157 @@ class ArcadeApp:
     def handle_settings_event(self, event: pygame.event.Event) -> None:
         if not self.settings_button_rects:
             self.build_settings_buttons()
+        
+        # Handle slider dragging
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mx, my = event.pos
+            # Check if clicking on a slider
+            for slider_key, (label_rect, slider_rect) in self.settings_slider_rects.items():
+                if slider_rect.collidepoint(mx, my):
+                    self.dragging_slider = slider_key
+                    self._update_slider_value(slider_key, mx, slider_rect)
+                    return
+            
+            # Check buttons
             for key, rect in self.settings_button_rects:
                 if rect.collidepoint(mx, my):
                     if key == "toggle_fullscreen":
                         self.toggle_fullscreen()
-                        # Rebuild button rects after potential size change
                         self.settings_button_rects.clear()
+                        self.settings_slider_rects.clear()
+                    elif key == "toggle_mute":
+                        self.cfg.audio.muted = not self.cfg.audio.muted
+                        self.sounds.set_muted(self.cfg.audio.muted)
+                    elif key == "toggle_fps":
+                        self.cfg.show_fps = not self.cfg.show_fps
+                    elif key == "difficulty_easy":
+                        self.cfg.difficulty = "easy"
+                        set_difficulty("easy")
+                    elif key == "difficulty_intermediate":
+                        self.cfg.difficulty = "intermediate"
+                        set_difficulty("intermediate")
+                    elif key == "difficulty_hard":
+                        self.cfg.difficulty = "hard"
+                        set_difficulty("hard")
                     elif key == "back":
-                        # Return to previous context
+                        self.dragging_slider = None
                         if self.settings_return_state == "menu":
                             self.state = "menu"
                         else:
                             self.state = "game"
                             self.paused = True
                     break
+        
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self.dragging_slider = None
+        
+        elif event.type == pygame.MOUSEMOTION and self.dragging_slider:
+            mx, my = event.pos
+            if self.dragging_slider in self.settings_slider_rects:
+                _, slider_rect = self.settings_slider_rects[self.dragging_slider]
+                self._update_slider_value(self.dragging_slider, mx, slider_rect)
+
+    def _update_slider_value(self, slider_key: str, mouse_x: int, slider_rect: pygame.Rect) -> None:
+        """Update a slider value based on mouse position."""
+        # Calculate value (0.0 to 1.0)
+        relative_x = mouse_x - slider_rect.x
+        value = max(0.0, min(1.0, relative_x / slider_rect.width))
+        
+        if slider_key == "sfx_volume":
+            self.cfg.audio.sfx_volume = value
+            self.sounds.set_volume(value)
 
     def build_settings_buttons(self) -> None:
         self.settings_button_rects.clear()
-        labels = [("toggle_fullscreen", "Toggle Fullscreen"), ("back", "Back")]
-        spacing = 64
-        padding_x, padding_y = 22, 12
+        self.settings_slider_rects.clear()
+        
+        start_y = self.cfg.height // 2 - 160
+        spacing = 50
         button_width = 420
-        total_h = len(labels) * spacing
-        start_y = self.cfg.height // 2 - total_h // 2 + 20
-        for i, (key, text) in enumerate(labels):
+        slider_width = 200
+        padding_x, padding_y = 22, 10
+        current_y = start_y
+        
+        # Sliders for volume
+        sliders = [
+            ("sfx_volume", "SFX Volume", self.cfg.audio.sfx_volume),
+        ]
+        
+        for key, label, value in sliders:
+            label_surf = self.font.render(label, True, (255, 255, 255))
+            label_rect = pygame.Rect(
+                self.cfg.width // 2 - 200,
+                current_y,
+                150,
+                label_surf.get_height()
+            )
+            slider_rect = pygame.Rect(
+                self.cfg.width // 2,
+                current_y,
+                slider_width,
+                20
+            )
+            self.settings_slider_rects[key] = (label_rect, slider_rect)
+            current_y += spacing
+        
+        # Mute button
+        mute_label = "Unmute" if self.cfg.audio.muted else "Mute"
+        mute_surf = self.font.render(mute_label, True, (255, 255, 255))
+        mute_w = max(150, mute_surf.get_width() + padding_x * 2)
+        mute_h = mute_surf.get_height() + padding_y * 2
+        self.settings_button_rects.append((
+            "toggle_mute",
+            pygame.Rect(self.cfg.width // 2 - mute_w // 2, current_y, mute_w, mute_h)
+        ))
+        current_y += spacing
+        
+        # Show FPS button
+        fps_label = "Hide FPS" if self.cfg.show_fps else "Show FPS"
+        fps_surf = self.font.render(fps_label, True, (255, 255, 255))
+        fps_w = max(150, fps_surf.get_width() + padding_x * 2)
+        fps_h = fps_surf.get_height() + padding_y * 2
+        self.settings_button_rects.append((
+            "toggle_fps",
+            pygame.Rect(self.cfg.width // 2 - fps_w // 2, current_y, fps_w, fps_h)
+        ))
+        current_y += spacing + 10
+        
+        # Difficulty selection
+        diff_label = self.font.render("Difficulty:", True, (255, 255, 255))
+        diff_y = current_y
+        current_y += 35
+        
+        # Difficulty buttons in a row
+        diff_buttons = [
+            ("difficulty_easy", "Easy"),
+            ("difficulty_intermediate", "Normal"),
+            ("difficulty_hard", "Hard"),
+        ]
+        button_w = 100
+        total_w = len(diff_buttons) * button_w + (len(diff_buttons) - 1) * 10
+        start_x = self.cfg.width // 2 - total_w // 2
+        
+        for i, (key, label) in enumerate(diff_buttons):
+            btn_rect = pygame.Rect(
+                start_x + i * (button_w + 10),
+                current_y,
+                button_w,
+                32
+            )
+            self.settings_button_rects.append((key, btn_rect))
+        
+        current_y += spacing + 20
+        
+        # Fullscreen and Back buttons
+        other_buttons = [("toggle_fullscreen", "Toggle Fullscreen"), ("back", "Back")]
+        for key, text in other_buttons:
             surf = self.font.render(text, True, (255, 255, 255))
             tw, th = surf.get_size()
             w = max(button_width, tw + padding_x * 2)
             h = th + padding_y * 2
             x = self.cfg.width // 2 - w // 2
-            y = start_y + i * spacing
-            self.settings_button_rects.append((key, pygame.Rect(x, y, w, h)))
+            self.settings_button_rects.append((key, pygame.Rect(x, current_y, w, h)))
+            current_y += spacing
 
     def draw_settings_menu(self) -> None:
         # Dim background overlay
@@ -363,16 +506,84 @@ class ArcadeApp:
 
         # Title
         title = self.font.render("Settings", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 140))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 220))
 
-        # Buttons
+        # Build/update UI elements
         self.build_settings_buttons()
         mouse_pos = pygame.mouse.get_pos()
+        
+        # Draw sliders
+        for slider_key, (label_rect, slider_rect) in self.settings_slider_rects.items():
+            # Draw label
+            label = "SFX Volume"
+            value = self.cfg.audio.sfx_volume
+            
+            label_surf = self.font.render(label, True, (255, 255, 255))
+            self.screen.blit(label_surf, (label_rect.x, label_rect.y))
+            
+            # Draw slider background
+            pygame.draw.rect(self.screen, (60, 60, 80), slider_rect, border_radius=4)
+            pygame.draw.rect(self.screen, (100, 110, 140), slider_rect, 2, border_radius=4)
+            
+            # Draw slider fill
+            fill_width = int(slider_rect.width * value)
+            if fill_width > 0:
+                fill_rect = pygame.Rect(slider_rect.x, slider_rect.y, fill_width, slider_rect.height)
+                pygame.draw.rect(self.screen, (100, 150, 220), fill_rect, border_radius=4)
+            
+            # Draw slider handle
+            handle_x = slider_rect.x + fill_width - 5
+            handle_rect = pygame.Rect(handle_x, slider_rect.y - 3, 10, slider_rect.height + 6)
+            pygame.draw.rect(self.screen, (255, 255, 255), handle_rect, border_radius=3)
+            
+            # Draw percentage
+            pct_text = self.font.render(f"{int(value * 100)}%", True, (200, 200, 200))
+            self.screen.blit(pct_text, (slider_rect.right + 15, slider_rect.y - 5))
+        
+        # Draw difficulty label
+        diff_label = self.font.render("Difficulty:", True, (255, 255, 255))
+        diff_y = self.cfg.height // 2 - 160 + 50 * 3 + 50 + 10  # After sliders, mute, and fps toggle
+        self.screen.blit(diff_label, (self.cfg.width // 2 - diff_label.get_width() // 2, diff_y))
+        
+        # Draw buttons
         for key, rect in self.settings_button_rects:
-            label = "Toggle Fullscreen" if key == "toggle_fullscreen" else "Back"
+            # Determine label text
+            if key == "toggle_fullscreen":
+                label = "Toggle Fullscreen"
+            elif key == "toggle_mute":
+                label = "Unmute" if self.cfg.audio.muted else "Mute"
+            elif key == "toggle_fps":
+                label = "Hide FPS" if self.cfg.show_fps else "Show FPS"
+            elif key == "back":
+                label = "Back"
+            elif key == "difficulty_easy":
+                label = "Easy"
+            elif key == "difficulty_intermediate":
+                label = "Normal"
+            elif key == "difficulty_hard":
+                label = "Hard"
+            else:
+                label = key
+            
             hovered = rect.collidepoint(*mouse_pos)
-            fill = (70, 80, 120) if hovered else (40, 45, 85)
-            border = (255, 255, 255) if hovered else (140, 150, 190)
+            
+            # Special styling for difficulty buttons
+            if key.startswith("difficulty_"):
+                diff_level = key.replace("difficulty_", "")
+                is_selected = self.cfg.difficulty == diff_level
+                if is_selected:
+                    fill = (80, 140, 80)  # Green for selected
+                    border = (120, 200, 120)
+                elif hovered:
+                    fill = (70, 80, 120)
+                    border = (255, 255, 255)
+                else:
+                    fill = (40, 45, 85)
+                    border = (140, 150, 190)
+            else:
+                fill = (70, 80, 120) if hovered else (40, 45, 85)
+                border = (255, 255, 255) if hovered else (140, 150, 190)
+            
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, width=2, border_radius=8)
             text_surf = self.font.render(label, True, (255, 255, 255))
