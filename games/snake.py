@@ -16,7 +16,7 @@ class SnakeGame(BaseGame):
         self.snake = [(5, 5), (4, 5), (3, 5)]
         self.apple = (10, 8)
         self.timer = 0.0
-        self.speed = self.rules["speed"]
+        self.speed = self.rules.get("fps", self.rules.get("speed", 15))  # Support both keys
         # Background style
         self.cell = 24
         self.offset = pygame.Vector2(80, 80)

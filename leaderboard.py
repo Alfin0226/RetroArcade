@@ -1,9 +1,9 @@
 from __future__ import annotations
-import asyncio
 from typing import List, Dict, Optional
 import pygame
 from settings import Settings
 import database
+from async_helper import run_async
 
 
 GAME_TABS = ["total", "snake", "tetris", "pacman", "space_invaders", "hybrid"]
@@ -25,9 +25,9 @@ def fetch_leaderboard(game: str, limit: int = 10) -> List[Dict]:
     
     try:
         if game == "total":
-            return asyncio.run(db.get_global_leaderboard(limit))
+            return run_async(db.get_global_leaderboard(limit))
         else:
-            return asyncio.run(db.get_game_leaderboard(game, limit))
+            return run_async(db.get_game_leaderboard(game, limit))
     except Exception as e:
         print(f"Error fetching leaderboard: {e}")
         return []

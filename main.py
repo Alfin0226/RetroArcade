@@ -499,7 +499,6 @@ class ArcadeApp:
             current_y += spacing
 
     def draw_settings_menu(self) -> None:
-        # Dim background overlay
         overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))

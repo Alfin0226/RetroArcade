@@ -1,10 +1,10 @@
 from __future__ import annotations
 from typing import Callable, Dict, Type, Optional
-import asyncio
 import pygame
 from settings import Settings
 from systems.sound_manager import SoundManager
 import database  # Import module to access db dynamically
+from async_helper import run_async  # Use shared async helper
 
 
 class BaseGame:
@@ -84,7 +84,8 @@ def save_game_score_for_user(user_id: int, game_name: str, score: int) -> bool:
         }
         db_game_name = game_map.get(game_name, game_name)
         
-        result = asyncio.run(db.update_game_score(user_id, db_game_name, score))
+        # Use run_async instead of asyncio.run() to avoid event loop conflicts
+        result = run_async(db.update_game_score(user_id, db_game_name, score))
         if result:
             print(f"🏆 New high score saved! {game_name}: {score}")
         else:
