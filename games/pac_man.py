@@ -8,6 +8,7 @@ import pygame
 from . import BaseGame, register_game
 from systems.rules import get_rules
 from systems.ai import astar
+from systems.scoring import ScoreBreakdown, calculate_score_breakdown
 
 # Colors
 MAZE_COLOR = (33, 33, 255)
@@ -185,6 +186,7 @@ class PacManGame(BaseGame):
         self.go_button_rects: list[tuple[str, pygame.Rect]] = []
         self.level_time = 0.0
         self.completion_time = 0.0
+        self.score_breakdown: ScoreBreakdown | None = None
 
         # Ghost release system
         self.global_timeout = 0.0
@@ -321,6 +323,7 @@ class PacManGame(BaseGame):
         self.game_over = False
         self.win = False
         self.go_button_rects.clear()
+        self.score_breakdown = None
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if self.game_over or self.win:
@@ -387,6 +390,7 @@ class PacManGame(BaseGame):
                 self.death_timer = 0.0
                 if self.lives <= 0:
                     self.game_over = True
+                    self._calculate_final_score()
                     self.go_button_rects.clear()
                     self.save_score()  # Save score to database
                 else:
@@ -970,29 +974,68 @@ class PacManGame(BaseGame):
             ts = self.font.render(label, True, (255, 255, 255))
             self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))
 
+    def _calculate_final_score(self) -> None:
+        # Calculate score breakdown with all bonuses
+        self.score_breakdown = calculate_score_breakdown(
+            base_score=self.score,
+            difficulty=self.cfg.difficulty,
+            levels=self.level,
+            login_streak=0,  # TODO: fetch from database
+            daily_streak=0,  # TODO: fetch from database
+            time_played=int(self.level_time)
+        )
+        # Update score to final score for saving
+        self.score = self.score_breakdown.final_score
+
     def _draw_game_over(self) -> None:
         overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
         title = self.title_font.render("Game Over", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 140))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
         
-        stats = [f"Score: {self.score}", f"Level: {self.level}"]
+        # Score breakdown
+        stats = [f"Level: {self.level}"]
+        if self.score_breakdown:
+            stats.extend(self.score_breakdown.as_display_lines())
+        else:
+            stats.append(f"Score: {self.score}")
+        
         stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
+        # Highlight final score line
+        if self.score_breakdown and len(stat_surfs) > 0:
+            stat_surfs[-1] = self.font.render(stats[-1], True, (255, 255, 100))
+        
         pad_x, pad_y = 16, 14
-        box_w = max(300, max(s.get_width() for s in stat_surfs) + pad_x * 2)
-        box_h = sum(s.get_height() for s in stat_surfs) + pad_y * 2 + 8
-        box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 90, box_w, box_h)
+        line_spacing = 6
+        content_w = max(s.get_width() for s in stat_surfs)
+        content_h = sum(s.get_height() for s in stat_surfs) + line_spacing * (len(stat_surfs) - 1)
+        box_w = max(320, content_w + pad_x * 2)
+        box_h = content_h + pad_y * 2
+        box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 140, box_w, box_h)
         pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=10)
         pygame.draw.rect(self.screen, (140, 150, 190), box, 2, border_radius=10)
         
         y = box.y + pad_y
         for s in stat_surfs:
             self.screen.blit(s, (box.x + pad_x, y))
-            y += s.get_height() + 4
+            y += s.get_height() + line_spacing
         
-        self._build_go_buttons()
+        # Buttons below the box
+        gap = 28
+        self.go_button_rects.clear()
+        labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
+        spacing, padding_x, padding_y, button_width = 50, 20, 10, 340
+        start_y = box.bottom + gap
+        for i, (key, text) in enumerate(labels):
+            surf = self.font.render(text, True, (255, 255, 255))
+            w = max(button_width, surf.get_width() + padding_x * 2)
+            h = surf.get_height() + padding_y * 2
+            x = self.cfg.width // 2 - w // 2
+            btn_y = start_y + i * spacing
+            self.go_button_rects.append((key, pygame.Rect(x, btn_y, w, h)))
+        
         mouse = pygame.mouse.get_pos()
         for key, rect in self.go_button_rects:
             hovered = rect.collidepoint(*mouse)

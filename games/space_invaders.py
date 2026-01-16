@@ -4,7 +4,7 @@ import random
 from . import BaseGame, register_game
 from systems.rules import get_rules
 from systems.collision import rect_vs_many
-from systems.scoring import ScoreEvent, invaders_score
+from systems.scoring import ScoreEvent, invaders_score, ScoreBreakdown, calculate_score_breakdown
 
 # Colors
 SI_TEXT_COLOR = (255, 255, 255)
@@ -46,6 +46,11 @@ class SpaceInvadersGame(BaseGame):
         # Game over state
         self.game_over = False
         self.go_button_rects: list[tuple[str, pygame.Rect]] = []
+        
+        # Time tracking and score breakdown
+        self.time_played: float = 0.0
+        self.wave: int = 1
+        self.score_breakdown: ScoreBreakdown | None = None
 
     def _create_bunkers(self) -> list[list[pygame.Rect]]:
         """Create 4 defense bunkers made of destructible blocks."""
@@ -90,6 +95,9 @@ class SpaceInvadersGame(BaseGame):
         self.speed = 30
         self.game_over = False
         self.go_button_rects.clear()
+        self.time_played = 0.0
+        self.wave = 1
+        self.score_breakdown = None
 
     def _spawn_new_wave(self) -> None:
         """Spawn a new wave of enemies."""
@@ -101,6 +109,7 @@ class SpaceInvadersGame(BaseGame):
 
     def _next_wave(self) -> None:
         """Start the next wave - keeps score and lives, spawns new enemies."""
+        self.wave += 1
         self.bullets.clear()
         self.enemy_bullets.clear()
         self._spawn_new_wave()
@@ -162,6 +171,7 @@ class SpaceInvadersGame(BaseGame):
         if self.game_over:
             return
         
+        self.time_played += dt
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
             self.player_rect.x -= 200 * dt
@@ -259,6 +269,7 @@ class SpaceInvadersGame(BaseGame):
                 self.enemy_bullets.clear()
                 if self.lives <= 0:
                     self.game_over = True
+                    self._calculate_final_score()
                     self.save_score()  # Save score to database
                     self.go_button_rects.clear()
                     return
@@ -292,6 +303,7 @@ class SpaceInvadersGame(BaseGame):
             self.lives -= 1
             if self.lives <= 0:
                 self.game_over = True
+                self._calculate_final_score()
                 self.save_score()  # Save score to database
                 self.go_button_rects.clear()
                 return
@@ -301,6 +313,7 @@ class SpaceInvadersGame(BaseGame):
         for enemy in self.enemies:
             if enemy.bottom >= self.cfg.height - 100:
                 self.game_over = True
+                self._calculate_final_score()
                 self.save_score()  # Save score to database
                 return
     
@@ -360,31 +373,68 @@ class SpaceInvadersGame(BaseGame):
             y = start_y + i * spacing
             self.go_button_rects.append((key, pygame.Rect(x, y, w, h)))
 
+    def _calculate_final_score(self) -> None:
+        # Calculate score breakdown with all bonuses
+        self.score_breakdown = calculate_score_breakdown(
+            base_score=self.score,
+            difficulty=self.cfg.difficulty,
+            levels=self.wave,
+            login_streak=0,  # TODO: fetch from database
+            daily_streak=0,  # TODO: fetch from database
+            time_played=int(self.time_played)
+        )
+        # Update score to final score for saving
+        self.score = self.score_breakdown.final_score
+
     def _draw_game_over(self) -> None:
         overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
         title = self.title_font.render("Game Over", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 140))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
         
-        # Score box
-        stats = [f"Score: {self.score}"]
+        # Score breakdown box
+        stats = [f"Wave: {self.wave}"]
+        if self.score_breakdown:
+            stats.extend(self.score_breakdown.as_display_lines())
+        else:
+            stats.append(f"Score: {self.score}")
+        
         stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
+        # Highlight final score line
+        if self.score_breakdown and len(stat_surfs) > 0:
+            stat_surfs[-1] = self.font.render(stats[-1], True, (255, 255, 100))
+        
         pad_x, pad_y = 16, 14
-        box_w = max(300, max(s.get_width() for s in stat_surfs) + pad_x * 2)
-        box_h = sum(s.get_height() for s in stat_surfs) + pad_y * 2 + 8
-        box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 90, box_w, box_h)
+        line_spacing = 6
+        content_w = max(s.get_width() for s in stat_surfs)
+        content_h = sum(s.get_height() for s in stat_surfs) + line_spacing * (len(stat_surfs) - 1)
+        box_w = max(320, content_w + pad_x * 2)
+        box_h = content_h + pad_y * 2
+        box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 140, box_w, box_h)
         pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=10)
         pygame.draw.rect(self.screen, (140, 150, 190), box, 2, border_radius=10)
         
         y = box.y + pad_y
         for s in stat_surfs:
             self.screen.blit(s, (box.x + pad_x, y))
-            y += s.get_height() + 4
+            y += s.get_height() + line_spacing
         
-        # Draw buttons
-        self._build_go_buttons()
+        # Draw buttons below the box
+        gap = 28
+        self.go_button_rects.clear()
+        labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
+        spacing, padding_x, padding_y, button_width = 64, 22, 12, 360
+        start_y = box.bottom + gap
+        for i, (key, text) in enumerate(labels):
+            surf = self.font.render(text, True, (255, 255, 255))
+            w = max(button_width, surf.get_width() + padding_x * 2)
+            h = surf.get_height() + padding_y * 2
+            x = self.cfg.width // 2 - w // 2
+            btn_y = start_y + i * spacing
+            self.go_button_rects.append((key, pygame.Rect(x, btn_y, w, h)))
+        
         mouse = pygame.mouse.get_pos()
         for key, rect in self.go_button_rects:
             hovered = rect.collidepoint(*mouse)

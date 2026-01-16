@@ -188,6 +188,8 @@ class PostgresBackend(DatabaseBackend):
                 hybrid_score INTEGER DEFAULT 0,
                 login_streak INTEGER DEFAULT 0,
                 last_login_date DATE,
+                games_played_today INTEGER DEFAULT 0,
+                last_played_date DATE,
                 updated_at TIMESTAMP DEFAULT NOW()
             );
             
@@ -262,6 +264,26 @@ class PostgresBackend(DatabaseBackend):
                 print("  ✅ Added updated_at to user_settings")
         except Exception as e:
             print(f"  Migration note (user_settings.updated_at): {e}")
+        
+        # Add games_played_today column to scores if not exists
+        try:
+            result = await conn.fetchval("SELECT column_name FROM information_schema.columns WHERE table_name='scores' AND column_name='games_played_today'")
+            if not result:
+                await conn.execute("ALTER TABLE scores ADD COLUMN games_played_today INTEGER DEFAULT 0")
+                migrations_run = True
+                print("  ✅ Added games_played_today to scores")
+        except Exception as e:
+            print(f"  Migration note (games_played_today): {e}")
+        
+        # Add last_played_date column to scores if not exists
+        try:
+            result = await conn.fetchval("SELECT column_name FROM information_schema.columns WHERE table_name='scores' AND column_name='last_played_date'")
+            if not result:
+                await conn.execute("ALTER TABLE scores ADD COLUMN last_played_date DATE")
+                migrations_run = True
+                print("  ✅ Added last_played_date to scores")
+        except Exception as e:
+            print(f"  Migration note (last_played_date): {e}")
         
         if migrations_run:
             print("  ✅ Database migrations completed")
@@ -400,6 +422,8 @@ class SQLiteBackend(DatabaseBackend):
                 space_invaders_score INTEGER DEFAULT 0,
                 login_streak INTEGER DEFAULT 0,
                 last_login_date TEXT,
+                games_played_today INTEGER DEFAULT 0,
+                last_played_date TEXT,
                 updated_at TEXT DEFAULT (datetime('now'))
             );
             
@@ -489,6 +513,28 @@ class SQLiteBackend(DatabaseBackend):
                 await self.conn.execute("ALTER TABLE user_settings ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))")
                 await self.conn.commit()
                 print("✅ Added updated_at column to user_settings table")
+            except Exception as e:
+                print(f"Migration note: {e}")
+        
+        # Add games_played_today column to scores if not exists
+        try:
+            await self.conn.execute("SELECT games_played_today FROM scores LIMIT 1")
+        except Exception:
+            try:
+                await self.conn.execute("ALTER TABLE scores ADD COLUMN games_played_today INTEGER DEFAULT 0")
+                await self.conn.commit()
+                print("✅ Added games_played_today column to scores table")
+            except Exception as e:
+                print(f"Migration note: {e}")
+        
+        # Add last_played_date column to scores if not exists
+        try:
+            await self.conn.execute("SELECT last_played_date FROM scores LIMIT 1")
+        except Exception:
+            try:
+                await self.conn.execute("ALTER TABLE scores ADD COLUMN last_played_date TEXT")
+                await self.conn.commit()
+                print("✅ Added last_played_date column to scores table")
             except Exception as e:
                 print(f"Migration note: {e}")
 
@@ -1210,6 +1256,94 @@ class DatabaseManager:
                 pass
         
         return new_streak
+    
+    async def increment_daily_games(self, user_id: int) -> int:
+        """Increment games played today counter. Resets if it's a new day.
+        Returns the new games_played_today count (capped at 10 for bonus purposes)."""
+        today = date.today()
+        
+        # Get last played date and current count
+        query = "SELECT last_played_date, games_played_today FROM scores WHERE user_id = $1"
+        row = await self.fetchrow(query, user_id)
+        
+        new_count = 1
+        if row:
+            last_played_str = row.get('last_played_date')
+            current_count = row.get('games_played_today') or 0
+            
+            if last_played_str:
+                # Parse date - handle both date object and string
+                if isinstance(last_played_str, str):
+                    last_played = date.fromisoformat(last_played_str)
+                else:
+                    last_played = last_played_str
+                
+                if last_played == today:
+                    # Same day - increment counter
+                    new_count = current_count + 1
+                else:
+                    # New day - reset counter
+                    new_count = 1
+        
+        # Update the counter
+        if self.using_production:
+            query = """
+                UPDATE scores 
+                SET games_played_today = $1, last_played_date = $2, updated_at = $3
+                WHERE user_id = $4
+            """
+            await self.execute(query, new_count, today, datetime.now(), user_id)
+        else:
+            query = """
+                UPDATE scores 
+                SET games_played_today = $1, last_played_date = $2, updated_at = $3
+                WHERE user_id = $4
+            """
+            await self.execute(query, new_count, today.isoformat(), datetime.now().isoformat(), user_id)
+        
+        # Also update backup if using production
+        if self.using_production and self.sqlite and self.sqlite.is_connected:
+            try:
+                backup_query = """
+                    UPDATE scores 
+                    SET games_played_today = $1, last_played_date = $2, updated_at = $3
+                    WHERE user_id = $4
+                """
+                await self.sqlite.execute(backup_query, new_count, today.isoformat(), datetime.now().isoformat(), user_id)
+            except Exception:
+                pass
+        
+        return new_count
+    
+    async def get_user_streaks(self, user_id: int) -> tuple[int, int]:
+        """Get user's login streak and games played today.
+        Returns (login_streak, games_played_today)."""
+        query = """
+            SELECT login_streak, games_played_today, last_played_date
+            FROM scores WHERE user_id = $1
+        """
+        row = await self.fetchrow(query, user_id)
+        
+        if not row:
+            return (0, 0)
+        
+        login_streak = row.get('login_streak') or 0
+        games_played_today = row.get('games_played_today') or 0
+        last_played_str = row.get('last_played_date')
+        
+        # Reset games_played_today if it's a different day
+        if last_played_str:
+            if isinstance(last_played_str, str):
+                last_played = date.fromisoformat(last_played_str)
+            else:
+                last_played = last_played_str
+            
+            if last_played != date.today():
+                games_played_today = 0
+        else:
+            games_played_today = 0
+        
+        return (login_streak, games_played_today)
     
     # ========== SCORE MANAGEMENT ==========
     

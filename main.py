@@ -73,12 +73,9 @@ class ArcadeApp:
         self.sounds.load_sound("power_up", "power_up.wav")
         self.sounds.load_sound("line_clear", "line_clear.wav")
         self.sounds.load_sound("game_over", "game_over.wav")
-        self.sounds.load_music("bg_music.mp3")
         # Apply initial volume settings
         self.sounds.set_volume(self.cfg.audio.sfx_volume)
-        self.sounds.set_music_volume(self.cfg.audio.music_volume)
         self.sounds.set_muted(self.cfg.audio.muted)
-        self.sounds.play_music()
 
     def _draw_fps(self) -> None:
         """Draw FPS counter in bottom-left corner."""

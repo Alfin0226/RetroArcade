@@ -3,7 +3,7 @@ import random
 import pygame
 from . import BaseGame, register_game
 from systems.rules import get_rules
-from systems.scoring import ScoreEvent, snake_score
+from systems.scoring import ScoreEvent, snake_score, ScoreBreakdown, calculate_score_breakdown
 from systems.collision import point_in_grid
 
 @register_game("snake")
@@ -37,6 +37,10 @@ class SnakeGame(BaseGame):
         self.body_color = self.head_color     # match body color to head
         self.eye_white = (245, 248, 255)
         self.eye_pupil = (30, 70, 160)
+        
+        # Time tracking and score breakdown
+        self.time_played: float = 0.0
+        self.score_breakdown: ScoreBreakdown | None = None
 
     def reset(self) -> None:
         super().reset()
@@ -47,6 +51,8 @@ class SnakeGame(BaseGame):
         self.game_over = False
         self.go_button_rects.clear()
         self.fruits_eaten = 0
+        self.time_played = 0.0
+        self.score_breakdown = None
 
     def spawn_apple(self) -> None:
         free = [(x, y) for x in range(self.grid_w) for y in range(self.grid_h) if (x, y) not in self.snake]
@@ -92,6 +98,7 @@ class SnakeGame(BaseGame):
     def update(self, dt: float) -> None:
         if self.game_over:
             return
+        self.time_played += dt
         self.timer += dt
         if self.timer < 1 / self.speed:
             return
@@ -102,6 +109,7 @@ class SnakeGame(BaseGame):
         # Collision with walls or self → Game Over
         if not point_in_grid(new_head, (self.grid_w, self.grid_h)) or new_head in self.snake:
             self.game_over = True
+            self._calculate_final_score()
             self.save_score()  # Save score to database
             return
         self.snake.insert(0, new_head)
@@ -175,6 +183,21 @@ class SnakeGame(BaseGame):
             y = start_y + i * spacing
             self.go_button_rects.append((key, pygame.Rect(x, y, w, h)))
 
+    def _calculate_final_score(self) -> None:
+        # Calculate score breakdown with all bonuses
+        # Snake doesn't have levels, so use fruits_eaten as a proxy
+        level_proxy = max(1, self.fruits_eaten // 5)
+        self.score_breakdown = calculate_score_breakdown(
+            base_score=self.score,
+            difficulty=self.cfg.difficulty,
+            levels=level_proxy,
+            login_streak=0,  # TODO: fetch from database
+            daily_streak=0,  # TODO: fetch from database
+            time_played=int(self.time_played)
+        )
+        # Update score to final score for saving
+        self.score = self.score_breakdown.final_score
+
     def draw_game_over_overlay(self) -> None:
         # Dim background
         overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
@@ -184,12 +207,59 @@ class SnakeGame(BaseGame):
         font = pygame.font.SysFont("arial", 36)
         small = pygame.font.SysFont("arial", 28)
         title = font.render("Game Over", True, (255, 255, 255))
-        score_text = small.render(f"Score: {self.fruits_eaten}", True, (220, 220, 240))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 140))
-        self.screen.blit(score_text, (self.cfg.width // 2 - score_text.get_width() // 2, self.cfg.height // 2 - 100))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 
-        # Buttons
-        self.build_go_buttons()
+        # Stats with score breakdown
+        stats = [f"Apples Eaten: {self.fruits_eaten}"]
+        if self.score_breakdown:
+            stats.extend(self.score_breakdown.as_display_lines())
+        else:
+            stats.append(f"Score: {self.score}")
+        
+        stat_surfs = [small.render(line, True, (220, 220, 240)) for line in stats]
+        # Highlight final score line
+        if self.score_breakdown and len(stat_surfs) > 0:
+            stat_surfs[-1] = small.render(stats[-1], True, (255, 255, 100))
+        
+        # Compute data box size
+        pad_x, pad_y = 16, 14
+        line_spacing = 6
+        content_w = max(s.get_width() for s in stat_surfs)
+        content_h = sum(s.get_height() for s in stat_surfs) + line_spacing * (len(stat_surfs) - 1)
+        box_w = max(320, content_w + pad_x * 2)
+        box_h = content_h + pad_y * 2
+        box_x = self.cfg.width // 2 - box_w // 2
+        box_y = self.cfg.height // 2 - 140
+        data_box = pygame.Rect(box_x, box_y, box_w, box_h)
+        
+        # Draw data box
+        pygame.draw.rect(self.screen, (35, 40, 80), data_box, border_radius=10)
+        pygame.draw.rect(self.screen, (140, 150, 190), data_box, width=2, border_radius=10)
+        
+        # Draw stats inside box
+        curr_y = data_box.y + pad_y
+        for surf in stat_surfs:
+            self.screen.blit(surf, (data_box.x + pad_x, curr_y))
+            curr_y += surf.get_height() + line_spacing
+
+        # Buttons positioned below the data box
+        gap = 28
+        # Adjust button position based on box
+        self.go_button_rects.clear()
+        labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
+        spacing = 64
+        padding_x, padding_y = 22, 12
+        button_width = 360
+        start_y = data_box.bottom + gap
+        for i, (key, text) in enumerate(labels):
+            surf = small.render(text, True, (255, 255, 255))
+            tw, th = surf.get_size()
+            w = max(button_width, tw + padding_x * 2)
+            h = th + padding_y * 2
+            x = self.cfg.width // 2 - w // 2
+            y = start_y + i * spacing
+            self.go_button_rects.append((key, pygame.Rect(x, y, w, h)))
+        
         mouse_pos = pygame.mouse.get_pos()
         for key, rect in self.go_button_rects:
             label = "Restart" if key == "restart" else "Back To Main Menu"

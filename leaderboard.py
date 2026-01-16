@@ -4,7 +4,7 @@ import pygame
 from settings import Settings
 import database
 from async_helper import run_async
-
+from pygame_emojis import load_emoji
 
 GAME_TABS = ["total", "snake", "tetris", "pacman", "space_invaders", "hybrid"]
 TAB_DISPLAY_NAMES = {
@@ -15,6 +15,7 @@ TAB_DISPLAY_NAMES = {
     "space_invaders": "Space Invaders",
     "hybrid": "Hybrid",
 }
+EMOJI_SIZE = (32,32)
 
 
 def fetch_leaderboard(game: str, limit: int = 10) -> List[Dict]:
@@ -72,8 +73,10 @@ class LeaderboardView:
         self.refresh_scores()
         
         # Title
-        title = self.title_font.render("🏆 Leaderboard", True, (255, 215, 0))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, 30))
+        title_emoji = load_emoji("🏆", EMOJI_SIZE)
+        self.screen.blit(title_emoji, (self.cfg.width // 2 - title_emoji.get_width() // 2 - 60, 20))
+        title = self.title_font.render("Leaderboard", True, (255, 215, 0))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2 + 20, 30))
         
         # Draw tabs
         self._draw_tabs()
@@ -183,16 +186,13 @@ class LeaderboardView:
             
             # Rank with medal for top 3
             rank = idx + 1
-            if rank == 1:
-                rank_str = "🥇"
-            elif rank == 2:
-                rank_str = "🥈"
-            elif rank == 3:
-                rank_str = "🥉"
+
+            if rank <= 3:
+                emoji_char = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉"
+                rank_surf = load_emoji(emoji_char, EMOJI_SIZE)
             else:
-                rank_str = f"{rank}."
+                rank_surf = self.font.render(str(rank), True, (255, 255, 255))
             
-            rank_surf = self.font.render(rank_str, True, (255, 255, 255))
             self.screen.blit(rank_surf, (table_x + 20, row_y + 8))
             
             # Player name

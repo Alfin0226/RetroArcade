@@ -3,7 +3,7 @@ import random
 import pygame
 from . import BaseGame, register_game
 from systems.rules import get_rules
-from systems.scoring import ScoreEvent, tetris_score
+from systems.scoring import ScoreEvent, tetris_score, ScoreBreakdown, calculate_score_breakdown
 
 TETROMINOES = {
     "I": [(0, 0), (1, 0), (2, 0), (3, 0)],
@@ -59,6 +59,10 @@ class TetrisGame(BaseGame):
         self.clearing: bool = False
         self.clear_anim_timer: float = 0.0
         self.clear_anim_duration: float = 0.35
+        
+        # Time tracking for bonus calculation
+        self.time_played: float = 0.0
+        self.score_breakdown: ScoreBreakdown | None = None
 
     def reset(self) -> None:
         super().reset()
@@ -76,6 +80,8 @@ class TetrisGame(BaseGame):
         self.clearing_rows = []
         self.clearing = False
         self.clear_anim_timer = 0.0
+        self.time_played = 0.0
+        self.score_breakdown = None
         self.spawn_piece()
 
     def spawn_piece(self) -> None:
@@ -87,6 +93,7 @@ class TetrisGame(BaseGame):
         # If spawn position is blocked then is Game Over
         if not self.can_move(0, 0, self.current_piece, self.piece_pos):
             self.game_over = True
+            self._calculate_final_score()
             self.save_score()  # Save score to database
             return
 
@@ -202,6 +209,8 @@ class TetrisGame(BaseGame):
     def update(self, dt: float) -> None:
         if self.game_over:
             return
+        # Track time played
+        self.time_played += dt
         # Drive line clear animation
         if self.clearing:
             self.clear_anim_timer += dt
@@ -298,6 +307,20 @@ class TetrisGame(BaseGame):
         self.screen.blit(lines_surf, (panel_x, score_y + 60))
 
     # ----- Game Over Overlay -----
+    def _calculate_final_score(self) -> None:
+        # Calculate score breakdown with all bonuses
+        # For now, login_streak and daily_streak are 0 (would come from database)
+        self.score_breakdown = calculate_score_breakdown(
+            base_score=self.score,
+            difficulty=self.cfg.difficulty,
+            levels=self.level,
+            login_streak=0,  # TODO: fetch from database
+            daily_streak=0,  # TODO: fetch from database
+            time_played=int(self.time_played)
+        )
+        # Update score to final score for saving
+        self.score = self.score_breakdown.final_score
+    
     def build_go_buttons(self, start_y: int | None = None) -> None:
         self.go_button_rects.clear()
         labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
@@ -326,25 +349,30 @@ class TetrisGame(BaseGame):
         title_font = pygame.font.SysFont("arial", 36)
         small = self.hud_font
         title = title_font.render("Game Over", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 180))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 
-        # Stats: Score, Level, Lines (inside a data box)
-        stats = [
-            f"Score: {self.score}",
-            f"Level: {self.level}",
-            f"Lines: {self.total_lines}",
-        ]
+        # Stats with score breakdown
+        stats = [f"Level: {self.level}", f"Lines: {self.total_lines}"]
+        if self.score_breakdown:
+            stats.extend(self.score_breakdown.as_display_lines())
+        else:
+            stats.append(f"Score: {self.score}")
+        
         stat_surfs = [small.render(line, True, (220, 220, 240)) for line in stats]
+        # Highlight final score line
+        if self.score_breakdown and len(stat_surfs) > 0:
+            stat_surfs[-1] = small.render(stats[-1], True, (255, 255, 100))
+        
         # Compute data box size
         pad_x, pad_y = 16, 14
-        line_spacing = 8
+        line_spacing = 6
         content_w = max(s.get_width() for s in stat_surfs)
         content_h = sum(s.get_height() for s in stat_surfs) + line_spacing * (len(stat_surfs) - 1)
         box_w = max(320, content_w + pad_x * 2)
         box_h = content_h + pad_y * 2
         box_x = self.cfg.width // 2 - box_w // 2
         # Place the box below the title
-        box_y = self.cfg.height // 2 - 120
+        box_y = self.cfg.height // 2 - 140
         data_box = pygame.Rect(box_x, box_y, box_w, box_h)
         # Draw data box
         pygame.draw.rect(self.screen, (35, 40, 80), data_box, border_radius=10)
@@ -378,64 +406,3 @@ class TetrisGame(BaseGame):
         while self.can_move(0, 1):
             self.piece_pos[1] += 1
         self.lock_piece()
-
-    def _draw_game_over_overlay(self) -> None:
-        # Dim background
-        overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
-        self.screen.blit(overlay, (0, 0))
-
-        title_font = pygame.font.SysFont("arial", 36)
-        small = self.hud_font
-        title = title_font.render("Game Over", True, (255, 255, 255))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 180))
-
-        # Stats: Score, Level, Lines (inside a data box)
-        stats = [
-            f"Score: {self.score}",
-            f"Level: {self.level}",
-            f"Lines: {self.total_lines}",
-        ]
-        stat_surfs = [small.render(line, True, (220, 220, 240)) for line in stats]
-        # Compute data box size
-        pad_x, pad_y = 16, 14
-        line_spacing = 8
-        content_w = max(s.get_width() for s in stat_surfs)
-        content_h = sum(s.get_height() for s in stat_surfs) + line_spacing * (len(stat_surfs) - 1)
-        box_w = max(320, content_w + pad_x * 2)
-        box_h = content_h + pad_y * 2
-        box_x = self.cfg.width // 2 - box_w // 2
-        # Place the box below the title
-        box_y = self.cfg.height // 2 - 120
-        data_box = pygame.Rect(box_x, box_y, box_w, box_h)
-        # Draw data box
-        pygame.draw.rect(self.screen, (35, 40, 80), data_box, border_radius=10)
-        pygame.draw.rect(self.screen, (140, 150, 190), data_box, width=2, border_radius=10)
-        # Draw stats inside box
-        curr_y = data_box.y + pad_y
-        for surf in stat_surfs:
-            self.screen.blit(surf, (data_box.x + pad_x, curr_y))
-            curr_y += surf.get_height() + line_spacing
-
-        # Before buttons, add score saving (call once)
-        if not hasattr(self, '_score_saved'):
-            player_name = "Player"  # Could add input for name later
-            if save_game_score("tetris", player_name, self.score, self.level):
-                print(f"✅ Score saved: {self.score}")
-            self._score_saved = True
-
-        # Buttons positioned with a gap below the data box
-        gap = 28
-        self.build_go_buttons(start_y=data_box.bottom + gap)
-        mouse_pos = pygame.mouse.get_pos()
-        for key, rect in self.go_button_rects:
-            label = "Restart" if key == "restart" else "Back To Main Menu"
-            hovered = rect.collidepoint(*mouse_pos)
-            fill = (70, 80, 120) if hovered else (40, 45, 85)
-            border = (255, 255, 255) if hovered else (140, 150, 190)
-            pygame.draw.rect(self.screen, fill, rect, border_radius=8)
-            pygame.draw.rect(self.screen, border, rect, width=2, border_radius=8)
-            text_surf = small.render(label, True, (255, 255, 255))
-            tx = rect.x + (rect.width - text_surf.get_width()) // 2
-            ty = rect.y + (rect.height - text_surf.get_height()) // 2
-            self.screen.blit(text_surf, (tx, ty))
