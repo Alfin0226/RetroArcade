@@ -628,10 +628,121 @@ class DatabaseManager:
                     )
                     if local_data:
                         await self._push_user_to_online(local_data)
+                else:
+                    # User exists in both - sync scores (take highest values)
+                    await self._sync_user_scores(username, online_user['user_id'])
             print("✅ Local data synced to online")
         except Exception as e:
             # Silent failure - sync is best effort
             print(f"ℹ️  Sync skipped: {e}")
+    
+    async def _sync_user_scores(self, username: str, online_user_id: int) -> None:
+        """Sync scores for a user that exists in both databases. Takes highest score for each game."""
+        try:
+            # Get local scores
+            local_scores = await self.sqlite.fetchrow("""
+                SELECT s.* FROM scores s 
+                JOIN users u ON s.user_id = u.user_id 
+                WHERE u.username = $1
+            """, username)
+            
+            # Get online scores
+            online_scores = await self.postgres.fetchrow(
+                "SELECT * FROM scores WHERE user_id = $1", online_user_id
+            )
+            
+            if not local_scores:
+                return  # No local scores to sync
+            
+            if not online_scores:
+                # Online has no scores record - create one with local data
+                last_login = local_scores.get('last_login_date')
+                if isinstance(last_login, str) and last_login:
+                    last_login = date.fromisoformat(last_login)
+                elif not last_login:
+                    last_login = None
+                
+                await self.postgres.execute("""
+                    INSERT INTO scores (user_id, total_score, pacman_score, tetris_score,
+                        snake_score, space_invaders_score, hybrid_score, login_streak, 
+                        last_login_date, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+                """, online_user_id, local_scores.get('total_score', 0),
+                    local_scores.get('pacman_score', 0), local_scores.get('tetris_score', 0),
+                    local_scores.get('snake_score', 0), local_scores.get('space_invaders_score', 0),
+                    local_scores.get('hybrid_score', 0), local_scores.get('login_streak', 0),
+                    last_login)
+                print(f"  ↑ Created online scores for '{username}'")
+                return
+            
+            # Both have scores - take the HIGHEST value for each game score
+            # This ensures scores only go up, never down (prevents data loss)
+            merged_scores = {
+                'total_score': max(local_scores.get('total_score', 0) or 0, online_scores.get('total_score', 0) or 0),
+                'pacman_score': max(local_scores.get('pacman_score', 0) or 0, online_scores.get('pacman_score', 0) or 0),
+                'tetris_score': max(local_scores.get('tetris_score', 0) or 0, online_scores.get('tetris_score', 0) or 0),
+                'snake_score': max(local_scores.get('snake_score', 0) or 0, online_scores.get('snake_score', 0) or 0),
+                'space_invaders_score': max(local_scores.get('space_invaders_score', 0) or 0, online_scores.get('space_invaders_score', 0) or 0),
+                'hybrid_score': max(local_scores.get('hybrid_score', 0) or 0, online_scores.get('hybrid_score', 0) or 0),
+            }
+            
+            # Recalculate total score as sum of all game scores
+            merged_scores['total_score'] = (
+                merged_scores['pacman_score'] + merged_scores['tetris_score'] + 
+                merged_scores['snake_score'] + merged_scores['space_invaders_score'] + 
+                merged_scores['hybrid_score']
+            )
+            
+            # Take higher login streak
+            merged_scores['login_streak'] = max(
+                local_scores.get('login_streak', 0) or 0, 
+                online_scores.get('login_streak', 0) or 0
+            )
+            
+            # Use more recent last_login_date
+            local_login = local_scores.get('last_login_date')
+            online_login = online_scores.get('last_login_date')
+            if isinstance(local_login, str) and local_login:
+                local_login = date.fromisoformat(local_login)
+            if isinstance(online_login, str) and online_login:
+                online_login = date.fromisoformat(online_login)
+            
+            if local_login and online_login:
+                last_login = max(local_login, online_login)
+            else:
+                last_login = local_login or online_login
+            
+            # Update online database with merged scores
+            await self.postgres.execute("""
+                UPDATE scores SET total_score = $1, pacman_score = $2, tetris_score = $3,
+                    snake_score = $4, space_invaders_score = $5, hybrid_score = $6,
+                    login_streak = $7, last_login_date = $8, updated_at = NOW()
+                WHERE user_id = $9
+            """, merged_scores['total_score'], merged_scores['pacman_score'],
+                merged_scores['tetris_score'], merged_scores['snake_score'],
+                merged_scores['space_invaders_score'], merged_scores['hybrid_score'],
+                merged_scores['login_streak'], last_login, online_user_id)
+            
+            # Also update local database with merged scores (in case online had higher)
+            local_user = await self.sqlite.fetchrow(
+                "SELECT user_id FROM users WHERE username = $1", username
+            )
+            if local_user:
+                last_login_str = last_login.isoformat() if last_login else None
+                await self.sqlite.execute("""
+                    UPDATE scores SET total_score = $1, pacman_score = $2, tetris_score = $3,
+                        snake_score = $4, space_invaders_score = $5, hybrid_score = $6,
+                        login_streak = $7, last_login_date = $8, updated_at = $9
+                    WHERE user_id = $10
+                """, merged_scores['total_score'], merged_scores['pacman_score'],
+                    merged_scores['tetris_score'], merged_scores['snake_score'],
+                    merged_scores['space_invaders_score'], merged_scores['hybrid_score'],
+                    merged_scores['login_streak'], last_login_str, datetime.now().isoformat(),
+                    local_user['user_id'])
+            
+            print(f"  ↔ Synced scores for '{username}' (merged highest values)")
+        except Exception as e:
+            print(f"  ⚠️ Failed to sync scores for '{username}': {e}")
     
     async def _push_user_to_online(self, local_user: Dict) -> None:
         """Push a local user to online database."""
@@ -926,7 +1037,7 @@ class DatabaseManager:
             """, new_user_id, datetime.now().isoformat())
     
     async def _sync_scores(self) -> None:
-        """Sync scores table between local and online."""
+        """Sync scores table between local and online. Takes highest values to prevent data loss."""
         # Get all scores with usernames for matching
         local_scores = await self.sqlite.fetch("""
             SELECT s.*, u.username FROM scores s 
@@ -943,16 +1054,70 @@ class DatabaseManager:
         for username, local_score in local_by_username.items():
             if username in online_by_username:
                 online_score = online_by_username[username]
-                local_ts = await self._parse_timestamp(local_score.get('updated_at'))
-                online_ts = await self._parse_timestamp(online_score.get('updated_at'))
                 
-                if local_ts and online_ts:
-                    if local_ts > online_ts:
-                        await self._update_scores_online(local_score, online_score['user_id'])
-                        print(f"  ↑ Synced scores for '{username}' to online")
-                    elif online_ts > local_ts:
-                        await self._update_scores_local(online_score, local_score['user_id'])
-                        print(f"  ↓ Synced scores for '{username}' to local")
+                # Merge scores - take HIGHEST value for each game to prevent data loss
+                merged_scores = {
+                    'pacman_score': max(local_score.get('pacman_score', 0) or 0, online_score.get('pacman_score', 0) or 0),
+                    'tetris_score': max(local_score.get('tetris_score', 0) or 0, online_score.get('tetris_score', 0) or 0),
+                    'snake_score': max(local_score.get('snake_score', 0) or 0, online_score.get('snake_score', 0) or 0),
+                    'space_invaders_score': max(local_score.get('space_invaders_score', 0) or 0, online_score.get('space_invaders_score', 0) or 0),
+                    'hybrid_score': max(local_score.get('hybrid_score', 0) or 0, online_score.get('hybrid_score', 0) or 0),
+                }
+                
+                # Recalculate total score
+                merged_scores['total_score'] = sum([
+                    merged_scores['pacman_score'], merged_scores['tetris_score'],
+                    merged_scores['snake_score'], merged_scores['space_invaders_score'],
+                    merged_scores['hybrid_score']
+                ])
+                
+                # Take higher login streak
+                merged_scores['login_streak'] = max(
+                    local_score.get('login_streak', 0) or 0,
+                    online_score.get('login_streak', 0) or 0
+                )
+                
+                # Use more recent last_login_date
+                local_login = local_score.get('last_login_date')
+                online_login = online_score.get('last_login_date')
+                if isinstance(local_login, str) and local_login:
+                    local_login = date.fromisoformat(local_login)
+                if isinstance(online_login, str) and online_login:
+                    online_login = date.fromisoformat(online_login)
+                if isinstance(local_login, date) and isinstance(online_login, date):
+                    last_login = max(local_login, online_login)
+                else:
+                    last_login = local_login or online_login
+                
+                # Update online with merged scores
+                last_login_for_pg = last_login
+                if isinstance(last_login_for_pg, str):
+                    last_login_for_pg = date.fromisoformat(last_login_for_pg)
+                    
+                await self.postgres.execute("""
+                    UPDATE scores SET total_score = $1, pacman_score = $2, tetris_score = $3,
+                        snake_score = $4, space_invaders_score = $5, hybrid_score = $6,
+                        login_streak = $7, last_login_date = $8, updated_at = NOW()
+                    WHERE user_id = $9
+                """, merged_scores['total_score'], merged_scores['pacman_score'],
+                    merged_scores['tetris_score'], merged_scores['snake_score'],
+                    merged_scores['space_invaders_score'], merged_scores['hybrid_score'],
+                    merged_scores['login_streak'], last_login_for_pg, online_score['user_id'])
+                
+                # Update local with merged scores
+                last_login_str = last_login.isoformat() if isinstance(last_login, date) else last_login
+                await self.sqlite.execute("""
+                    UPDATE scores SET total_score = $1, pacman_score = $2, tetris_score = $3,
+                        snake_score = $4, space_invaders_score = $5, hybrid_score = $6,
+                        login_streak = $7, last_login_date = $8, updated_at = $9
+                    WHERE user_id = $10
+                """, merged_scores['total_score'], merged_scores['pacman_score'],
+                    merged_scores['tetris_score'], merged_scores['snake_score'],
+                    merged_scores['space_invaders_score'], merged_scores['hybrid_score'],
+                    merged_scores['login_streak'], last_login_str, datetime.now().isoformat(),
+                    local_score['user_id'])
+                
+                print(f"  ↔ Merged scores for '{username}'")
     
     async def _update_scores_online(self, local_score: Dict, online_user_id: int) -> None:
         """Update online scores with local data."""
