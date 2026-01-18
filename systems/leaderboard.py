@@ -13,7 +13,7 @@ class LeaderboardManager:
         self.last_fetch: Dict[str, float] = {}
     
     def get_leaderboard(self, game: str, limit: int = 10, force_refresh: bool = False) -> List[dict]:
-        """Get leaderboard for a game (uses cache if recent)."""
+        #Get leaderboard for a game with caching
         import time
         current_time = time.time()
         
@@ -45,7 +45,7 @@ class LeaderboardManager:
             return False
     
     def draw_leaderboard(self, screen: pygame.Surface, game: str, x: int, y: int, font: pygame.font.Font):
-        """Draw leaderboard on screen."""
+        #Draw leaderboard on screen
         leaderboard = self.get_leaderboard(game, limit=10)
         
         # Title
