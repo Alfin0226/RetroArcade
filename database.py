@@ -1526,8 +1526,22 @@ class DatabaseManager:
         # This ensures local backup always has the scores
         if self.using_production and self.sqlite and self.sqlite.is_connected:
             try:
-                await self._update_score_on_backend(self.sqlite, user_id, game_col, score)
-                print("💾 Score also saved to local backup")
+                # Get username from production database to find local user
+                username = await self.postgres.fetchval(
+                    "SELECT username FROM users WHERE user_id = $1", user_id
+                )
+                if username:
+                    # Look up the local user_id by username (IDs may differ between databases)
+                    local_user_id = await self.sqlite.fetchval(
+                        "SELECT user_id FROM users WHERE username = $1", username
+                    )
+                    if local_user_id:
+                        await self._update_score_on_backend(self.sqlite, local_user_id, game_col, score)
+                        print("💾 Score also saved to local backup")
+                    else:
+                        print(f"⚠️ User '{username}' not found in local backup")
+                else:
+                    print(f"⚠️ Could not find username for user_id {user_id}")
             except Exception as e:
                 print(f"⚠️ Failed to save to local backup: {e}")
         
