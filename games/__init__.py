@@ -19,6 +19,7 @@ class BaseGame:
         self.lives = 3
         self.user_id = user_id  # User ID for score tracking
         self._score_saved = False  # Prevent double-saving
+        self._cached_streaks: tuple[int, int] | None = None  # (login_streak, daily_streak)
 
     def start(self) -> None:
         self.active = True
@@ -48,6 +49,27 @@ class BaseGame:
         if result:
             self._score_saved = True
         return result
+    
+    def get_user_streaks(self) -> tuple[int, int]:
+        """Get user's login streak and daily games played.
+        Returns (login_streak, daily_streak). Returns (0, 0) for guests."""
+        if self._cached_streaks is not None:
+            return self._cached_streaks
+        
+        if not self.user_id:
+            return (0, 0)
+        
+        db = database.db
+        if not db or not db.is_connected:
+            return (0, 0)
+        
+        try:
+            streaks = run_async(db.get_user_streaks(self.user_id))
+            self._cached_streaks = streaks
+            return streaks
+        except Exception as e:
+            print(f"Failed to fetch user streaks: {e}")
+            return (0, 0)
 
 
 GAME_REGISTRY: Dict[str, Type[BaseGame]] = {}
@@ -81,6 +103,9 @@ def save_game_score_for_user(user_id: int, game_name: str, score: int) -> bool:
             "pac_man": "pacman",
             "space_invaders": "space_invaders",
             "hybrid": "hybrid",
+            "hybrid_tetris": "hybrid_tetris",
+            "hybrid_pacman_invaders": "hybrid_pacman_invaders",
+            "hybrid_space_tetris": "hybrid_space_tetris",
         }
         db_game_name = game_map.get(game_name, game_name)
         
@@ -101,3 +126,6 @@ from . import tetris  # noqa: F401
 from . import pac_man  # noqa: F401
 from . import space_invaders  # noqa: F401
 from . import hybrid  # noqa: F401
+from . import hybrid_tetris  # noqa: F401
+from . import hybrid_pacman_invaders  # noqa: F401
+from . import hybrid_space_tetris  # noqa: F401

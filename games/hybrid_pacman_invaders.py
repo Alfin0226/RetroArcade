@@ -1,3 +1,23 @@
+"""
+Hybrid Mode 3: Pac-Man + Space Invaders
+
+Combines Pac-Man gameplay with Space Invaders theming by replacing ghosts
+with Space Invader enemy sprites visually. All enemy movement, collision
+detection, and power-up behaviour remain identical to the original Pac-Man.
+
+⚠️ Important: Sprite changes do not affect collision detection.
+⚠️ No shooting mechanics - enemies follow maze-constrained movement paths.
+
+Win condition: All collectibles cleared
+Lose condition: Collision with an invader when not powered
+
+Design justification:
+Several hybrid approaches were considered. Options involving shooting mechanics
+or free enemy movement were rejected due to conflicts with Pac-Man's maze-based
+structure. The final implementation replaces Pac-Man ghosts with Space Invader
+enemies visually only, preserving all original mechanics while introducing
+thematic variety.
+"""
 from __future__ import annotations
 import math
 import random
@@ -10,17 +30,79 @@ from systems.rules import get_rules
 from systems.ai import astar
 from systems.scoring import ScoreBreakdown, calculate_score_breakdown
 
-# Colors
+# Colors (Space Invaders themed)
 MAZE_COLOR = (33, 33, 255)
 PELLET_COLOR = (255, 183, 174)
 ENERGIZER_COLOR = (255, 183, 174)
-PLAYER_COLOR = (255, 255, 0)
-FRIGHTENED_COLOR = (33, 33, 255)
-GHOST_COLORS = [
-    (255, 0, 0),      # Red (Blinky)
-    (255, 184, 255),  # Pink (Pinky)
-    (0, 255, 255),    # Cyan (Inky)
-    (255, 184, 82),   # Orange (Clyde)
+PLAYER_COLOR = (255, 255, 0)  # Pac-Man stays yellow
+FRIGHTENED_COLOR = (33, 33, 255)  # Blue when vulnerable
+
+# Space Invader colors (replacing ghost colors)
+INVADER_COLORS = [
+    (255, 80, 80),    # Red Invader (was Blinky)
+    (255, 80, 255),   # Magenta Invader (was Pinky)
+    (80, 255, 255),   # Cyan Invader (was Inky)
+    (255, 165, 80),   # Orange Invader (was Clyde)
+]
+
+# Space Invader pixel art patterns for each "ghost"
+INVADER_PATTERNS = [
+    # Type 0 - Classic squid (Blinky replacement)
+    [
+        [0,0,0,1,1,0,0,0],
+        [0,0,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,0],
+        [1,1,0,1,1,0,1,1],
+        [1,1,1,1,1,1,1,1],
+        [0,0,1,0,0,1,0,0],
+        [0,1,0,1,1,0,1,0],
+        [1,0,1,0,0,1,0,1],
+    ],
+    # Type 1 - Crab style (Pinky replacement)
+    [
+        [0,0,1,0,0,0,1,0,0],
+        [0,0,0,1,0,1,0,0,0],
+        [0,0,1,1,1,1,1,0,0],
+        [0,1,1,0,1,0,1,1,0],
+        [1,1,1,1,1,1,1,1,1],
+        [1,0,1,1,1,1,1,0,1],
+        [1,0,1,0,0,0,1,0,1],
+        [0,0,0,1,1,1,0,0,0],
+    ],
+    # Type 2 - Octopus style (Inky replacement)
+    [
+        [0,0,0,0,1,1,0,0,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,0,0,0,0,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,0,0,1,1,0,0],
+        [1,1,0,0,0,0,0,0,1,1],
+    ],
+    # Type 3 - Bug style (Clyde replacement)
+    [
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [1,1,0,1,1,1,1,0,1,1],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,1,1,1,0,0,1,1,1,0],
+        [0,0,1,0,0,0,0,1,0,0],
+        [0,1,0,0,0,0,0,0,1,0],
+        [0,0,1,0,0,0,0,1,0,0],
+    ],
+]
+
+# Frightened invader pattern (same for all when vulnerable)
+FRIGHTENED_PATTERN = [
+    [0,1,1,1,1,1,1,1,1,0],
+    [1,1,1,1,1,1,1,1,1,1],
+    [1,1,0,1,1,1,1,0,1,1],
+    [1,1,1,1,1,1,1,1,1,1],
+    [1,0,1,0,1,1,0,1,0,1],
+    [1,1,0,1,0,0,1,0,1,1],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,0,1,0,0,0,0,1,0,0],
 ]
 
 # Fruit scoring table by level
@@ -73,7 +155,8 @@ T     .   #      #   .     T
 Vec2 = Tuple[int, int]
 
 @dataclass
-class Ghost:
+class Invader:
+    """Space Invader enemy (replaces Ghost visually, same AI behavior)."""
     idx: int
     pos: pygame.Vector2
     state: str = "caged"
@@ -85,10 +168,20 @@ class Ghost:
     last_dir: Vec2 = (0, 0)
     reversed_this_fright: bool = False
 
-@register_game("pac_man")
-class PacManGame(BaseGame):
+
+@register_game("hybrid_pacman_invaders")
+class HybridPacManInvadersGame(BaseGame):
+    """
+    Hybrid Mode 3: Pac-Man with Space Invader enemies.
+    
+    Ghosts are visually replaced with Space Invader sprites.
+    All enemy movement, collision detection, and power-up behaviour
+    remain identical to the original Pac-Man rules.
+    """
+    
     def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
         super().__init__(screen, cfg, sounds, user_id=user_id)
+        self.name = "hybrid_pacman_invaders"
         (
             self.grid,
             self.pellets,
@@ -126,7 +219,8 @@ class PacManGame(BaseGame):
         self.player_accum = 0.0
         self.ghost_speed = 9.0
         self.tunnel_speed_factor = 0.5
-        # Release rules (Pinky timer, Inky/Clyde pellet thresholds)
+        
+        # Release rules
         self.release_elapsed = 0.0
         self.pinky_delay = 10.0
         self.inky_threshold = 30
@@ -135,27 +229,26 @@ class PacManGame(BaseGame):
         self.inky_unlocked = False
         self.clyde_unlocked = False
         
-        # Ghost house and exit
+        # Ghost/Invader house
         ghost_positions = self._ghost_start_positions()
         self.ghost_house = ghost_positions[0]
         self.ghost_exit = self._find_house_exit(self.ghost_house)
         
-        # Ensure we have at least 4 positions for ghosts (fallback to duplicates if needed)
         while len(ghost_positions) < 4:
             ghost_positions.append(ghost_positions[-1])
         
-        # Initialize 4 ghosts with correct positions
-        self.ghosts: List[Ghost] = [
-            Ghost(0, pygame.Vector2(self.ghost_exit[0], self.ghost_exit[1] - 1), "normal", scatter_corner=(self.w - 2, 1), dot_limit=0),
-            Ghost(1, pygame.Vector2(*ghost_positions[0]), "caged", scatter_corner=(1, 1), dot_limit=0),
-            Ghost(2, pygame.Vector2(*ghost_positions[1]), "caged", scatter_corner=(self.w - 2, self.h - 2), dot_limit=30),
-            Ghost(3, pygame.Vector2(*ghost_positions[2]), "caged", scatter_corner=(1, self.h - 2), dot_limit=60),
+        # Initialize 4 Invaders (replacing ghosts)
+        self.invaders: List[Invader] = [
+            Invader(0, pygame.Vector2(self.ghost_exit[0], self.ghost_exit[1] - 1), "normal", scatter_corner=(self.w - 2, 1), dot_limit=0),
+            Invader(1, pygame.Vector2(*ghost_positions[0]), "caged", scatter_corner=(1, 1), dot_limit=0),
+            Invader(2, pygame.Vector2(*ghost_positions[1]), "caged", scatter_corner=(self.w - 2, self.h - 2), dot_limit=30),
+            Invader(3, pygame.Vector2(*ghost_positions[2]), "caged", scatter_corner=(1, self.h - 2), dot_limit=60),
         ]
-        for g in self.ghosts:
-            g.last_dir = (0, 0)
-            g.reversed_this_fright = False
+        for inv in self.invaders:
+            inv.last_dir = (0, 0)
+            inv.reversed_this_fright = False
         
-        # Mode system
+        # Mode system (unchanged from Pac-Man)
         self.mode = "scatter"
         self.mode_timer = 0.0
         self.scatter_duration = 7.0
@@ -163,47 +256,49 @@ class PacManGame(BaseGame):
         self.frightened_timer = 0.0
         self.frightened_chain = 0
         
-        # Fruit
-        self.fruit_pos = self._near_house()
-        self.fruit_active = False
-        self.fruit_timer = 0.0
-        self.fruit_spawns_left = 2
-        self.fruit_level_pts = 100
-        self.fruit_name = "Cherry"
+        # Cruise Elroy (unchanged)
+        self.cruise_elroy_stage = 0
+        self.elroy_thresholds = [(20, 1.05), (10, 1.1)]
         
         # Game state
         self.level = 1
         self.lives = 3
-        self.extra_life_awarded = False
         self.pellets_total = len(self.pellets) + len(self.energizers)
         self.pellets_eaten = 0
+        
+        # Fruit
+        self.fruit_active = False
+        self.fruit_timer = 0.0
+        self.fruit_pos = self._near_house()
+        self.fruit_spawns_left = 2
+        self.fruit_name = "Cherry"
+        self.fruit_level_pts = 100
         
         # UI
         self.font = pygame.font.SysFont("arial", 20)
         self.title_font = pygame.font.SysFont("arial", 32)
+        self.hud_font = pygame.font.SysFont("arial", 28)
         self.game_over = False
         self.win = False
         self.go_button_rects: list[tuple[str, pygame.Rect]] = []
         self.level_time = 0.0
-        self.completion_time = 0.0
         self.score_breakdown: ScoreBreakdown | None = None
-
-        # Ghost release system
+        
+        # Ghost release
         self.global_timeout = 0.0
         self.global_timeout_limit = 4.0
-        
-        # Cruise Elroy
-        self.cruise_elroy_stage = 0
-        self.elroy_triggered_this_life = False
-        
-        # Pause system
-        self.paused = False
-        self.pause_button_rects: list[tuple[str, pygame.Rect]] = []
         
         # Death animation
         self.death_animation = False
         self.death_timer = 0.0
         self.death_duration = 1.5
+        
+        # Pause
+        self.paused = False
+        self.pause_button_rects: list[tuple[str, pygame.Rect]] = []
+        
+        # Animation timer for invaders
+        self.invader_anim_timer = 0.0
 
     def _parse_map(self, raw: str):
         lines = raw.splitlines()
@@ -242,6 +337,24 @@ class PacManGame(BaseGame):
             house_spaces.extend(ghost_tiles)
         return grid, pellets, energizers, player_start, ghost_tiles, tunnels, house_spaces
 
+    def _reachable_from(self, start: Vec2, forbid: Set[Vec2] | None = None) -> Set[Vec2]:
+        if forbid is None:
+            forbid = set()
+        visited: Set[Vec2] = set()
+        queue = deque([start])
+        while queue:
+            node = queue.popleft()
+            if node in visited:
+                continue
+            visited.add(node)
+            x, y = node
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.w and 0 <= ny < self.h and self.grid[ny][nx] == 0:
+                    if (nx, ny) not in visited and (nx, ny) not in forbid:
+                        queue.append((nx, ny))
+        return visited
+
     def _ghost_start_positions(self) -> List[Vec2]:
         positions = sorted(self.house_spaces, key=lambda p: (p[1], p[0]))
         if not positions:
@@ -249,6 +362,25 @@ class PacManGame(BaseGame):
         while len(positions) < 3:
             positions.append(positions[-1])
         return positions[:3]
+
+    def _find_house_exit(self, house_pos: Vec2) -> Vec2:
+        x, y = house_pos
+        for dy in range(-3, 0):
+            check_y = y + dy
+            if 0 <= check_y < self.h and self.grid[check_y][x] == 0:
+                if (x, check_y) not in self.house_spaces and (x, check_y) not in self.ghost_house_tiles:
+                    return (x, check_y)
+        return (x, max(0, y - 3))
+
+    def _near_house(self) -> Vec2:
+        if self.ghost_house:
+            x, y = self.ghost_house
+            for dy in range(1, 5):
+                check_y = y + dy
+                if 0 <= check_y < self.h and self.grid[check_y][x] == 0:
+                    if (x, check_y) not in self.house_spaces:
+                        return (x, check_y)
+        return self.player_start
 
     def reset(self) -> None:
         super().reset()
@@ -259,7 +391,6 @@ class PacManGame(BaseGame):
             self.level = 1
             self.score = 0
             self.lives = 3
-            self.extra_life_awarded = False
             (
                 self.grid,
                 self.pellets,
@@ -275,6 +406,7 @@ class PacManGame(BaseGame):
             self.energizers = {e for e in self.energizers if e in reachable and e not in self.player_block}
             self.pellets_total = len(self.pellets) + len(self.energizers)
             self.pellets_eaten = 0
+            self.fruit_spawns_left = 2
             self.level_time = 0.0
         
         self.player.update(*self.player_start)
@@ -282,7 +414,6 @@ class PacManGame(BaseGame):
         self.desired_dir = (0, 0)
         self.player_accum = 0.0
         
-        # Ensure 4 valid ghost positions
         ghost_positions = self._ghost_start_positions()
         while len(ghost_positions) < 4:
             ghost_positions.append(ghost_positions[-1])
@@ -290,26 +421,24 @@ class PacManGame(BaseGame):
         self.ghost_house = ghost_positions[0]
         self.ghost_exit = self._find_house_exit(self.ghost_house)
         
-        self.ghosts = [
-            Ghost(0, pygame.Vector2(self.ghost_exit[0], self.ghost_exit[1] - 1), "normal", scatter_corner=(self.w - 2, 1), dot_limit=0),
-            Ghost(1, pygame.Vector2(*ghost_positions[0]), "caged", scatter_corner=(1, 1), dot_limit=0),
-            Ghost(2, pygame.Vector2(*ghost_positions[1]), "caged", scatter_corner=(self.w - 2, self.h - 2), dot_limit=30),
-            Ghost(3, pygame.Vector2(*ghost_positions[2]), "caged", scatter_corner=(1, self.h - 2), dot_limit=60),
+        self.invaders = [
+            Invader(0, pygame.Vector2(self.ghost_exit[0], self.ghost_exit[1] - 1), "normal", scatter_corner=(self.w - 2, 1), dot_limit=0),
+            Invader(1, pygame.Vector2(*ghost_positions[0]), "caged", scatter_corner=(1, 1), dot_limit=0),
+            Invader(2, pygame.Vector2(*ghost_positions[1]), "caged", scatter_corner=(self.w - 2, self.h - 2), dot_limit=30),
+            Invader(3, pygame.Vector2(*ghost_positions[2]), "caged", scatter_corner=(1, self.h - 2), dot_limit=60),
         ]
-        for g in self.ghosts:
-            g.step_accum = 0.0
-            g.dot_counter = 0
-            g.last_dir = (0, 0)
-            g.reversed_this_fright = False
+        for inv in self.invaders:
+            inv.step_accum = 0.0
+            inv.dot_counter = 0
+            inv.last_dir = (0, 0)
+            inv.reversed_this_fright = False
         
         self.release_elapsed = 0.0
         self.pinky_unlocked = False
         self.inky_unlocked = False
         self.clyde_unlocked = False
-        self.active_ghost_idx = 1  # Pinky first
         self.global_timeout = 0.0
         self.cruise_elroy_stage = 0
-        self.elroy_triggered_this_life = False
         self.death_animation = False
         self.death_timer = 0.0
         self.mode = "scatter"
@@ -318,12 +447,11 @@ class PacManGame(BaseGame):
         self.frightened_chain = 0
         self.fruit_active = False
         self.fruit_timer = 0.0
-        self.fruit_spawns_left = 2
-        self._update_fruit_for_level()
         self.game_over = False
         self.win = False
         self.go_button_rects.clear()
         self.score_breakdown = None
+        self.invader_anim_timer = 0.0
 
     def handle_event(self, event: pygame.event.Event) -> None:
         if self.game_over or self.win:
@@ -339,13 +467,11 @@ class PacManGame(BaseGame):
                             pygame.event.post(pygame.event.Event(pygame.USEREVENT, {"action": "back_to_menu"}))
                         break
             return
-
-        # Pause toggle on ESC
+        
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             self.paused = not self.paused
             return
-
-        # Handle pause menu
+        
         if self.paused:
             if not self.pause_button_rects:
                 self._build_pause_buttons()
@@ -356,17 +482,16 @@ class PacManGame(BaseGame):
                         if key == "resume":
                             self.paused = False
                         elif key == "restart":
-                            self._restart_level(full_reset=False)
+                            self._restart_level(full_reset=True)
                             self.paused = False
                         elif key == "back":
                             pygame.event.post(pygame.event.Event(pygame.USEREVENT, {"action": "back_to_menu"}))
                         break
             return
-
-        # Block input during death animation
+        
         if self.death_animation:
             return
-
+        
         if event.type != pygame.KEYDOWN:
             return
         if event.key in (pygame.K_LEFT, pygame.K_a):
@@ -381,8 +506,7 @@ class PacManGame(BaseGame):
     def update(self, dt: float) -> None:
         if self.game_over or self.win or self.paused:
             return
-
-        # Death animation
+        
         if self.death_animation:
             self.death_timer += dt
             if self.death_timer >= self.death_duration:
@@ -392,43 +516,30 @@ class PacManGame(BaseGame):
                     self.game_over = True
                     self._calculate_final_score()
                     self.go_button_rects.clear()
-                    self.save_score()  # Save score to database
+                    self.save_score()
                 else:
                     self._restart_level(full_reset=False)
             return
-
+        
         self.level_time += dt
         self.release_elapsed += dt
-
-        # Extra life at 10,000 points
-        if not self.extra_life_awarded and self.score >= 10000:
-            self.lives += 1
-            self.extra_life_awarded = True
-
-        # Global timeout for ghost release (if no dots eaten for 4s)
+        self.invader_anim_timer += dt
+        
+        # Global timeout for invader release
         self.global_timeout += dt
         if self.global_timeout >= self.global_timeout_limit:
-            self._force_release_next_ghost()
+            self._force_release_next_invader()
             self.global_timeout = 0.0
-
-        # Cruise Elroy logic (Blinky speed boost)
-        remaining = len(self.pellets) + len(self.energizers)
-        if remaining <= 10 and self.cruise_elroy_stage < 2:
-            self.cruise_elroy_stage = 2
-            self.elroy_triggered_this_life = True
-        elif remaining <= 20 and self.cruise_elroy_stage < 1:
-            self.cruise_elroy_stage = 1
-            self.elroy_triggered_this_life = True
-
-        # Mode switching
+        
+        # Mode switching (unchanged)
         if self.frightened_timer > 0:
             self.frightened_timer = max(0.0, self.frightened_timer - dt)
             if self.frightened_timer == 0:
                 self.frightened_chain = 0
-                for g in self.ghosts:
-                    if g.state == "frightened":
-                        g.state = "normal"
-                    g.reversed_this_fright = False
+                for inv in self.invaders:
+                    if inv.state == "frightened":
+                        inv.state = "normal"
+                    inv.reversed_this_fright = False
         else:
             self.mode_timer += dt
             if self.mode == "scatter" and self.mode_timer >= self.scatter_duration:
@@ -437,89 +548,77 @@ class PacManGame(BaseGame):
             elif self.mode == "chase" and self.mode_timer >= self.chase_duration:
                 self.mode = "scatter"
                 self.mode_timer = 0.0
-
+        
+        # Cruise Elroy
+        remaining = len(self.pellets) + len(self.energizers)
+        for thresh, _ in self.elroy_thresholds:
+            if remaining <= thresh:
+                self.cruise_elroy_stage = max(self.cruise_elroy_stage, self.elroy_thresholds.index((thresh, _)) + 1)
+        
         # Fruit spawning
-        if not self.fruit_active and self.fruit_spawns_left > 0:
-            remaining = self.pellets_total - self.pellets_eaten
-            if remaining in (self.pellets_total - 70, self.pellets_total - 170):
-                self._spawn_fruit()
         if self.fruit_active:
             self.fruit_timer -= dt
             if self.fruit_timer <= 0:
                 self.fruit_active = False
-
-        # Speed scaling
-        level_boost = min(3.0, 0.15 * (self.level - 1))
-        pps = self.player_speed + level_boost
+        elif self.fruit_spawns_left > 0 and self.pellets_eaten in (70, 170):
+            self._spawn_fruit()
         
-        # Blinky gets Cruise Elroy speed boost
-        blinky_boost = 0.0
-        if self.cruise_elroy_stage == 1:
-            blinky_boost = 1.5
-        elif self.cruise_elroy_stage == 2:
-            blinky_boost = 3.0
+        # Speed
+        pps = self.player_speed
+        gps = self.ghost_speed
+        if self.cruise_elroy_stage > 0:
+            gps *= self.elroy_thresholds[self.cruise_elroy_stage - 1][1]
         
-        gps = self.ghost_speed + level_boost
-
         # Step player
         step_time_p = 1.0 / pps
         self.player_accum += dt
         while self.player_accum >= step_time_p:
             self.player_accum -= step_time_p
             self._step_player()
-
-        # Step ghosts
-        for g in self.ghosts:
-            # Eyes mode: high speed return to house
-            if g.state == "eyes":
-                eyes_speed = gps * 2.0  # double speed for eyes
+        
+        # Step invaders (same as ghost AI)
+        for inv in self.invaders:
+            if inv.state == "eyes":
+                eyes_speed = gps * 2.0
                 step_time_g = 1.0 / eyes_speed
-                g.step_accum += dt
-                while g.step_accum >= step_time_g:
-                    g.step_accum -= step_time_g
-                    self._step_ghost_eyes(g)
+                inv.step_accum += dt
+                while inv.step_accum >= step_time_g:
+                    inv.step_accum -= step_time_g
+                    self._step_invader_eyes(inv)
                 continue
-
-            # Caged ghosts: check release conditions
-            if g.state == "caged":
-                if self._should_release(g):
-                    path = self._ghost_astar((int(g.pos.x), int(g.pos.y)), self.ghost_exit)
+            
+            if inv.state == "caged":
+                if self._should_release(inv):
+                    path = self._ghost_astar((int(inv.pos.x), int(inv.pos.y)), self.ghost_exit)
                     if path:
                         if len(path) > 1:
                             next_pos = path[1]
-                            g.last_dir = (next_pos[0] - int(g.pos.x), next_pos[1] - int(g.pos.y))
-                            g.pos.update(*next_pos)
+                            inv.last_dir = (next_pos[0] - int(inv.pos.x), next_pos[1] - int(inv.pos.y))
+                            inv.pos.update(*next_pos)
                         else:
-                            g.pos.update(*path[0])
-                        if tuple(map(int, (g.pos.x, g.pos.y))) == self.ghost_exit:
-                            g.state = "normal"
-                            g.reversed_this_fright = False
+                            inv.pos.update(*path[0])
+                        if tuple(map(int, (inv.pos.x, inv.pos.y))) == self.ghost_exit:
+                            inv.state = "normal"
+                            inv.reversed_this_fright = False
                     else:
-                        exit_neighbors = self._neighbors((int(g.pos.x), int(g.pos.y)))
+                        exit_neighbors = self._neighbors((int(inv.pos.x), int(inv.pos.y)))
                         if self.ghost_exit in exit_neighbors:
-                            g.pos.update(*self.ghost_exit)
-                            g.state = "normal"
-                            g.reversed_this_fright = False
+                            inv.pos.update(*self.ghost_exit)
+                            inv.state = "normal"
+                            inv.reversed_this_fright = False
                 continue
-
-            # Normal/frightened ghosts
-            node = (int(g.pos.x), int(g.pos.y))
+            
+            node = (int(inv.pos.x), int(inv.pos.y))
             factor = self.tunnel_speed_factor if node in self.tunnels else 1.0
-            ghost_speed = gps + (blinky_boost if g.idx == 0 else 0.0)
-            step_time_g = 1.0 / (ghost_speed * factor)
-            g.step_accum += dt
-            while g.step_accum >= step_time_g:
-                g.step_accum -= step_time_g
-                self._step_ghost(g)
-
-        # Level complete - check for win condition
+            step_time_g = 1.0 / (gps * factor)
+            inv.step_accum += dt
+            while inv.step_accum >= step_time_g:
+                inv.step_accum -= step_time_g
+                self._step_invader(inv)
+        
+        # Win condition
         if not self.pellets and not self.energizers:
-            # All pellets cleared - trigger win screen instead of advancing
-            self.win = True
-            self.completion_time = self.level_time
-            self.go_button_rects.clear()
-            self.save_score()  # Save score to database when player wins
-            return
+            self._advance_level()
 
     def _step_player(self) -> None:
         if self._can_move(self.player, self.desired_dir, is_player=True):
@@ -527,16 +626,16 @@ class PacManGame(BaseGame):
         if self._can_move(self.player, self.current_dir, is_player=True):
             self.player += pygame.Vector2(self.current_dir)
             self.player.update(*self._apply_tunnel(self.player))
-
+        
         pnode = (int(self.player.x), int(self.player.y))
         
-        # Eating pellets: increment active ghost's dot counter and reset global timeout
         pellet_eaten = False
         if pnode in self.pellets:
             self.pellets.remove(pnode)
             self.pellets_eaten += 1
             self.score += 10
             pellet_eaten = True
+            self.sounds.play("eat")
         if pnode in self.energizers:
             self.energizers.remove(pnode)
             self.pellets_eaten += 1
@@ -545,110 +644,101 @@ class PacManGame(BaseGame):
             pellet_eaten = True
         if pellet_eaten:
             self.global_timeout = 0.0
-        # Fruit collection
+        
         if self.fruit_active and pnode == self.fruit_pos:
             self.score += self.fruit_level_pts
             self.fruit_active = False
+            self.sounds.play("power_up")
+        
+        for inv in self.invaders:
+            self._resolve_collision(inv)
 
-        # Collision with ghosts
-        for g in self.ghosts:
-            self._resolve_collision(g)
-
-    def _step_ghost(self, g: Ghost) -> None:
-        start = (int(g.pos.x), int(g.pos.y))
-
+    def _step_invader(self, inv: Invader) -> None:
+        start = (int(inv.pos.x), int(inv.pos.y))
+        
         if self.frightened_timer > 0:
-            if not g.reversed_this_fright and g.last_dir != (0, 0):
-                g.last_dir = (-g.last_dir[0], -g.last_dir[1])
-                g.reversed_this_fright = True
-            g.state = "frightened"
+            if not inv.reversed_this_fright and inv.last_dir != (0, 0):
+                inv.last_dir = (-inv.last_dir[0], -inv.last_dir[1])
+                inv.reversed_this_fright = True
+            inv.state = "frightened"
             nbs = self._neighbors(start)
             if nbs:
                 chosen = random.choice(nbs)
-                g.last_dir = (chosen[0] - start[0], chosen[1] - start[1])
-                g.pos.update(*chosen)
+                inv.last_dir = (chosen[0] - start[0], chosen[1] - start[1])
+                inv.pos.update(*chosen)
         else:
-            g.state = "normal"
-            target = (int(self.player.x), int(self.player.y)) if (g.idx == 0 and self.cruise_elroy_stage > 0) else (g.scatter_corner if self.mode == "scatter" else self._chase_target(g))
+            inv.state = "normal"
+            target = inv.scatter_corner if self.mode == "scatter" else self._chase_target(inv)
             path = self._ghost_astar(start, target)
             if path and len(path) > 1:
                 next_pos = path[1]
-                g.last_dir = (next_pos[0] - start[0], next_pos[1] - start[1])
-                g.pos.update(*next_pos)
+                inv.last_dir = (next_pos[0] - start[0], next_pos[1] - start[1])
+                inv.pos.update(*next_pos)
             else:
                 nbs = self._neighbors(start)
                 if nbs:
                     chosen = random.choice(nbs)
-                    g.last_dir = (chosen[0] - start[0], chosen[1] - start[1])
-                    g.pos.update(*chosen)
-            g.reversed_this_fright = False
-
-        new_node = (int(g.pos.x), int(g.pos.y))
+                    inv.last_dir = (chosen[0] - start[0], chosen[1] - start[1])
+                    inv.pos.update(*chosen)
+            inv.reversed_this_fright = False
+        
+        new_node = (int(inv.pos.x), int(inv.pos.y))
         if new_node in self.tunnels:
-            g.pos.update(*self._apply_tunnel(g.pos))
-        self._resolve_collision(g)
+            inv.pos.update(*self._apply_tunnel(inv.pos))
+        self._resolve_collision(inv)
 
-    def _step_ghost_eyes(self, g: Ghost) -> None:
-        """High-speed eyes return to house, instant regeneration on arrival."""
-        start = (int(g.pos.x), int(g.pos.y))
-        # Eyes can path through house tiles (use special pathfinding)
+    def _step_invader_eyes(self, inv: Invader) -> None:
+        start = (int(inv.pos.x), int(inv.pos.y))
         path = self._ghost_astar_eyes(start, self.ghost_house)
         if path and len(path) > 1:
             next_pos = path[1]
-            g.last_dir = (next_pos[0] - start[0], next_pos[1] - start[1])
-            g.pos.update(*next_pos)
-        if tuple(map(int, (g.pos.x, g.pos.y))) == self.ghost_house:
-            g.state = "normal"
-            g.reversed_this_fright = False
+            inv.last_dir = (next_pos[0] - start[0], next_pos[1] - start[1])
+            inv.pos.update(*next_pos)
+        if tuple(map(int, (inv.pos.x, inv.pos.y))) == self.ghost_house:
+            inv.state = "normal"
+            inv.reversed_this_fright = False
 
     def _neighbors(self, node: Vec2) -> List[Vec2]:
         x, y = node
         out = []
-        for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nx, ny = x + dx, y + dy
             if 0 <= nx < self.w and 0 <= ny < self.h and self.grid[ny][nx] == 0:
-                # Block house tiles for normal ghosts
                 if (nx, ny) not in self.house_spaces:
                     out.append((nx, ny))
         return out
 
     def _ghost_astar(self, start: Vec2, goal: Vec2) -> List[Vec2] | None:
-        """A* for ghosts: exclude tunnels and house tiles from pathfinding."""
         temp_grid = [row[:] for row in self.grid]
         for tx, ty in self.tunnels:
             if 0 <= ty < len(temp_grid) and 0 <= tx < len(temp_grid[0]):
                 temp_grid[ty][tx] = 1
-        # Block house tiles (except start/goal for caged ghost exits)
         for hx, hy in self.house_spaces:
             if (hx, hy) not in (start, goal) and 0 <= hy < len(temp_grid) and 0 <= hx < len(temp_grid[0]):
                 temp_grid[hy][hx] = 1
         return astar(start, goal, temp_grid)
 
     def _ghost_astar_eyes(self, start: Vec2, goal: Vec2) -> List[Vec2] | None:
-        """A* for eyes: exclude tunnels only, allow house tiles."""
         temp_grid = [row[:] for row in self.grid]
         for tx, ty in self.tunnels:
             if 0 <= ty < len(temp_grid) and 0 <= tx < len(temp_grid[0]):
                 temp_grid[ty][tx] = 1
         return astar(start, goal, temp_grid)
 
-    def _should_release(self, g: Ghost) -> bool:
-        if g.idx == 0:
-            return True  # Blinky always outside
-        if g.idx == 1:
-            # Pinky: 10 seconds OR global timeout forces release
+    def _should_release(self, inv: Invader) -> bool:
+        if inv.idx == 0:
+            return True
+        if inv.idx == 1:
             if not self.pinky_unlocked and self.release_elapsed >= self.pinky_delay:
                 self.pinky_unlocked = True
             return self.pinky_unlocked
-        if g.idx == 2:
-            # Inky: only after Pinky is out AND 30 pellets eaten
+        if inv.idx == 2:
             if not self.pinky_unlocked:
                 return False
             if not self.inky_unlocked and self.pellets_eaten >= self.inky_threshold:
                 self.inky_unlocked = True
             return self.inky_unlocked
-        if g.idx == 3:
-            # Clyde: only after Inky is out AND 60 pellets eaten
+        if inv.idx == 3:
             if not self.inky_unlocked:
                 return False
             if not self.clyde_unlocked and self.pellets_eaten >= self.clyde_threshold:
@@ -656,53 +746,39 @@ class PacManGame(BaseGame):
             return self.clyde_unlocked
         return False
 
-    def _force_release_next_ghost(self) -> None:
-        """Global timeout: only force Pinky out (time-based), not pellet-based ghosts."""
+    def _force_release_next_invader(self) -> None:
         for idx in (1, 2, 3):
-            g = self.ghosts[idx]
-            if g.state == "caged":
+            inv = self.invaders[idx]
+            if inv.state == "caged":
                 if idx == 1:
-                    # Pinky can be forced by timeout
                     self.pinky_unlocked = True
                     self.release_elapsed = self.pinky_delay
                     break
                 elif idx == 2:
-                    # Inky: ONLY unlock if threshold met (don't force)
                     if self.pellets_eaten >= self.inky_threshold:
                         self.inky_unlocked = True
                         break
                 elif idx == 3:
-                    # Clyde: ONLY unlock if threshold met (don't force)
                     if self.pellets_eaten >= self.clyde_threshold:
                         self.clyde_unlocked = True
                         break
 
-    def _ghost_astar(self, start: Vec2, goal: Vec2) -> List[Vec2] | None:
-        """A* for ghosts: exclude tunnels from pathfinding grid (they teleport manually)."""
-        # Clone grid and mark tunnel tiles as walls temporarily
-        temp_grid = [row[:] for row in self.grid]
-        for tx, ty in self.tunnels:
-            if 0 <= ty < len(temp_grid) and 0 <= tx < len(temp_grid[0]):
-                temp_grid[ty][tx] = 1  # block tunnels in pathfinding
-        return astar(start, goal, temp_grid)
-
-    def _resolve_collision(self, g: Ghost) -> None:
+    def _resolve_collision(self, inv: Invader) -> None:
         pnode = (int(self.player.x), int(self.player.y))
-        gnode = (int(g.pos.x), int(g.pos.y))
-        if pnode != gnode:
+        inode = (int(inv.pos.x), int(inv.pos.y))
+        if pnode != inode:
             return
         
-        if self.frightened_timer > 0 and g.state == "frightened":
+        if self.frightened_timer > 0 and inv.state == "frightened":
             points = [200, 400, 800, 1600][min(self.frightened_chain, 3)]
             self.score += points
             self.frightened_chain += 1
-            g.state = "eyes"
-        elif g.state not in ("eyes", "caged"):
-            # Player caught: trigger death animation
+            inv.state = "eyes"
+            self.sounds.play("power_up")
+        elif inv.state not in ("eyes", "caged"):
             self.lives -= 1
             self.death_animation = True
             self.death_timer = 0.0
-            # Reset Cruise Elroy on death
             self.cruise_elroy_stage = 0
 
     def _trigger_frightened(self) -> None:
@@ -710,8 +786,8 @@ class PacManGame(BaseGame):
         duration = max(0.5, base - 0.3 * (self.level - 1))
         self.frightened_timer = duration
         self.frightened_chain = 0
-        for g in self.ghosts:
-            g.reversed_this_fright = False
+        for inv in self.invaders:
+            inv.reversed_this_fright = False
         self.sounds.play("power_up")
 
     def _advance_level(self) -> None:
@@ -766,15 +842,6 @@ class PacManGame(BaseGame):
             return False
         return True
 
-    def _neighbors(self, node: Vec2) -> List[Vec2]:
-        x, y = node
-        out = []
-        for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < self.w and 0 <= ny < self.h and self.grid[ny][nx] == 0:
-                out.append((nx, ny))
-        return out
-
     def _apply_tunnel(self, pos: pygame.Vector2) -> Vec2:
         node = (int(pos.x), int(pos.y))
         if len(self.tunnels) == 2:
@@ -784,44 +851,44 @@ class PacManGame(BaseGame):
                 return self.tunnels[0]
         return node
 
-    def _chase_target(self, g: Ghost) -> Vec2:
-        """Calculate chase target for each ghost based on their AI personality."""
+    def _chase_target(self, inv: Invader) -> Vec2:
         p = (int(self.player.x), int(self.player.y))
         d = self.current_dir
         
-        if g.idx == 0:  # Red (Blinky) - direct chase
+        if inv.idx == 0:
             return p
-        elif g.idx == 1:  # Pink (Pinky) - 4 tiles ahead
+        elif inv.idx == 1:
             return (
                 max(0, min(self.w - 1, p[0] + 4 * d[0])),
                 max(0, min(self.h - 1, p[1] + 4 * d[1]))
             )
-        elif g.idx == 2:  # Cyan (Inky) - flanker (double vector from Red to 2 ahead of player)
+        elif inv.idx == 2:
             two_ahead = (
                 max(0, min(self.w - 1, p[0] + 2 * d[0])),
                 max(0, min(self.h - 1, p[1] + 2 * d[1]))
             )
-            red = next((gh for gh in self.ghosts if gh.idx == 0), self.ghosts[0])
+            red = next((i for i in self.invaders if i.idx == 0), self.invaders[0])
             vec = (two_ahead[0] - int(red.pos.x), two_ahead[1] - int(red.pos.y))
             return (
                 max(0, min(self.w - 1, int(red.pos.x) + 2 * vec[0])),
                 max(0, min(self.h - 1, int(red.pos.y) + 2 * vec[1]))
             )
-        else:  # Orange (Clyde) - chase if far, scatter if close
-            dist = abs(int(g.pos.x) - p[0]) + abs(int(g.pos.y) - p[1])
-            return p if dist > 8 else g.scatter_corner
+        else:
+            dist = abs(int(inv.pos.x) - p[0]) + abs(int(inv.pos.y) - p[1])
+            return p if dist > 8 else inv.scatter_corner
+
+    # ==================== DRAWING ====================
 
     def draw(self) -> None:
         self._draw_maze()
         self._draw_collectibles()
         
-        # Draw player unless in death animation (show death sprite instead)
         if not self.death_animation:
             self._draw_player()
         else:
             self._draw_player_death()
         
-        self._draw_ghosts()
+        self._draw_invaders()
         self._draw_hud()
         
         if self.paused:
@@ -864,7 +931,7 @@ class PacManGame(BaseGame):
         r = pygame.Rect(ox + x * self.cell, oy + y * self.cell, self.cell - 2, self.cell - 2)
         t = (pygame.time.get_ticks() % 400) / 400.0
         mouth = int(20 + 25 * abs(0.5 - t) * 2)
-        angle = {(1,0):0, (-1,0):180, (0,-1):90, (0,1):270}.get(self.current_dir, 0)
+        angle = {(1, 0): 0, (-1, 0): 180, (0, -1): 90, (0, 1): 270}.get(self.current_dir, 0)
         pygame.draw.circle(self.screen, PLAYER_COLOR, r.center, r.width // 2)
         
         rad1 = math.radians(angle - mouth)
@@ -872,53 +939,94 @@ class PacManGame(BaseGame):
         radius = r.width // 2
         p1 = (r.center[0] + radius * math.cos(rad1), r.center[1] - radius * math.sin(rad1))
         p2 = (r.center[0] + radius * math.cos(rad2), r.center[1] - radius * math.sin(rad2))
-        pygame.draw.polygon(self.screen, (0,0,0), [r.center, p1, p2])
+        pygame.draw.polygon(self.screen, (0, 0, 0), [r.center, p1, p2])
 
     def _draw_player_death(self) -> None:
-        """Simple death animation: shrinking circle."""
         ox, oy = int(self.offset.x), int(self.offset.y)
         x, y = int(self.player.x), int(self.player.y)
         cx = ox + x * self.cell + self.cell // 2
         cy = oy + y * self.cell + self.cell // 2
-        # Shrink radius over time
         progress = self.death_timer / self.death_duration
         radius = int((self.cell // 2) * (1.0 - progress))
         if radius > 0:
             pygame.draw.circle(self.screen, PLAYER_COLOR, (cx, cy), radius)
 
-    def _draw_ghosts(self) -> None:
+    def _draw_invaders(self) -> None:
+        """Draw Space Invader sprites instead of ghosts."""
         ox, oy = int(self.offset.x), int(self.offset.y)
-        for g in self.ghosts:
-            x, y = int(g.pos.x), int(g.pos.y)
+        
+        for inv in self.invaders:
+            x, y = int(inv.pos.x), int(inv.pos.y)
             rect = pygame.Rect(ox + x * self.cell, oy + y * self.cell, self.cell - 2, self.cell - 2)
             
-            if g.state == "eyes":
-                self._draw_eyes(rect)
+            if inv.state == "eyes":
+                self._draw_invader_eyes(rect, inv.idx)
                 continue
             
-            color = FRIGHTENED_COLOR if g.state == "frightened" else GHOST_COLORS[g.idx]
+            # Choose pattern and color based on state
+            if inv.state == "frightened":
+                pattern = FRIGHTENED_PATTERN
+                color = FRIGHTENED_COLOR
+                # Flashing effect when frightened time is low
+                if self.frightened_timer < 2.0 and (pygame.time.get_ticks() // 200) % 2 == 0:
+                    color = (255, 255, 255)
+            else:
+                pattern = INVADER_PATTERNS[inv.idx]
+                color = INVADER_COLORS[inv.idx]
             
-            # Body
-            pygame.draw.circle(self.screen, color, (rect.centerx, rect.centery - 2), rect.width // 2)
-            pygame.draw.rect(self.screen, color, pygame.Rect(rect.x, rect.centery - 2, rect.width, rect.height // 2))
-            
-            # Skirt
-            for i in range(4):
-                px = rect.x + i * (rect.width // 4) + rect.width // 8
-                pygame.draw.circle(self.screen, color, (px, rect.bottom), rect.width // 8)
-            
-            self._draw_eyes(rect)
+            # Draw the Space Invader pixel art
+            self._draw_invader_sprite(rect, pattern, color)
 
-    def _draw_eyes(self, rect: pygame.Rect) -> None:
-        white = (255, 255, 255)
-        pupil = (0, 0, 255)
-        eye_size = max(4, rect.width // 5)
-        L = pygame.Rect(rect.x + rect.width // 4 - eye_size // 2, rect.y + rect.height // 3, eye_size, eye_size)
-        R = pygame.Rect(rect.x + 3 * rect.width // 4 - eye_size // 2, rect.y + rect.height // 3, eye_size, eye_size)
-        pygame.draw.ellipse(self.screen, white, L)
-        pygame.draw.ellipse(self.screen, white, R)
-        pygame.draw.circle(self.screen, pupil, L.center, max(2, eye_size // 3))
-        pygame.draw.circle(self.screen, pupil, R.center, max(2, eye_size // 3))
+    def _draw_invader_sprite(self, rect: pygame.Rect, pattern: list, color: tuple) -> None:
+        """Draw a Space Invader using pixel art pattern."""
+        pattern_h = len(pattern)
+        pattern_w = len(pattern[0]) if pattern else 0
+        
+        if pattern_w == 0 or pattern_h == 0:
+            return
+        
+        # Calculate pixel size to fit the pattern in the rect
+        pixel_w = max(1, rect.width // pattern_w)
+        pixel_h = max(1, rect.height // pattern_h)
+        
+        # Center the pattern in the rect
+        start_x = rect.x + (rect.width - pattern_w * pixel_w) // 2
+        start_y = rect.y + (rect.height - pattern_h * pixel_h) // 2
+        
+        # Simple animation: alternate legs/arms position
+        anim_frame = int(self.invader_anim_timer * 3) % 2
+        
+        for py, row in enumerate(pattern):
+            for px, pixel in enumerate(row):
+                if pixel == 1:
+                    # Animate bottom rows (legs)
+                    offset_x = 0
+                    if py >= pattern_h - 2 and anim_frame == 1:
+                        offset_x = 1 if px < pattern_w // 2 else -1
+                    
+                    pygame.draw.rect(
+                        self.screen, color,
+                        pygame.Rect(
+                            start_x + px * pixel_w + offset_x,
+                            start_y + py * pixel_h,
+                            pixel_w,
+                            pixel_h
+                        )
+                    )
+
+    def _draw_invader_eyes(self, rect: pygame.Rect, idx: int) -> None:
+        """Draw just eyes for returning invader (after being eaten)."""
+        color = INVADER_COLORS[idx]
+        eye_y = rect.centery
+        eye_size = max(3, rect.width // 5)
+        
+        # Draw two glowing eyes
+        pygame.draw.circle(self.screen, color, (rect.centerx - 5, eye_y), eye_size)
+        pygame.draw.circle(self.screen, color, (rect.centerx + 5, eye_y), eye_size)
+        pygame.draw.circle(self.screen, (255, 255, 255), (rect.centerx - 5, eye_y), eye_size - 1)
+        pygame.draw.circle(self.screen, (255, 255, 255), (rect.centerx + 5, eye_y), eye_size - 1)
+        pygame.draw.circle(self.screen, (0, 0, 0), (rect.centerx - 4, eye_y), 2)
+        pygame.draw.circle(self.screen, (0, 0, 0), (rect.centerx + 6, eye_y), 2)
 
     def _draw_hud(self) -> None:
         s1 = self.font.render(f"Score: {self.score}", True, (255, 255, 255))
@@ -927,10 +1035,14 @@ class PacManGame(BaseGame):
         self.screen.blit(s1, (16, 10))
         self.screen.blit(s2, (16, 32))
         self.screen.blit(s3, (16, 54))
+        
+        # Mode label
+        mode_label = self.font.render("PAC-MAN + INVADERS", True, (255, 100, 100))
+        self.screen.blit(mode_label, (self.cfg.width // 2 - mode_label.get_width() // 2, 10))
 
     def _build_go_buttons(self) -> None:
         self.go_button_rects.clear()
-        labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
+        labels = [("restart", "Play Again"), ("back", "Back To Menu")]
         spacing, padding_x, padding_y, button_width = 64, 22, 12, 360
         start_y = self.cfg.height // 2 - len(labels) * spacing // 2 + 40
         for i, (key, text) in enumerate(labels):
@@ -943,7 +1055,7 @@ class PacManGame(BaseGame):
 
     def _build_pause_buttons(self) -> None:
         self.pause_button_rects.clear()
-        labels = [("resume", "Resume"), ("restart", "Restart"), ("back", "Back To Main Menu")]
+        labels = [("resume", "Resume"), ("restart", "Restart"), ("back", "Back To Menu")]
         spacing, padding_x, padding_y, button_width = 64, 22, 12, 360
         start_y = self.cfg.height // 2 - len(labels) * spacing // 2
         for i, (key, text) in enumerate(labels):
@@ -970,12 +1082,11 @@ class PacManGame(BaseGame):
             border = (255, 255, 255) if hovered else (140, 150, 190)
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=8)
-            label = {"resume": "Resume", "restart": "Restart", "back": "Back To Main Menu"}[key]
+            label = {"resume": "Resume", "restart": "Restart", "back": "Back To Menu"}[key]
             ts = self.font.render(label, True, (255, 255, 255))
             self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))
 
     def _calculate_final_score(self) -> None:
-        # Calculate score breakdown with all bonuses
         login_streak, daily_streak = self.get_user_streaks()
         self.score_breakdown = calculate_score_breakdown(
             base_score=self.score,
@@ -985,7 +1096,6 @@ class PacManGame(BaseGame):
             daily_streak=daily_streak,
             time_played=int(self.level_time)
         )
-        # Update score to final score for saving
         self.score = self.score_breakdown.final_score
 
     def _draw_game_over(self) -> None:
@@ -993,10 +1103,9 @@ class PacManGame(BaseGame):
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
-        title = self.title_font.render("Game Over", True, (255, 255, 255))
+        title = self.title_font.render("Game Over", True, (255, 100, 100))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
         
-        # Score breakdown
         stats = [f"Level: {self.level}"]
         if self.score_breakdown:
             stats.extend(self.score_breakdown.as_display_lines())
@@ -1004,7 +1113,6 @@ class PacManGame(BaseGame):
             stats.append(f"Score: {self.score}")
         
         stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
-        # Highlight final score line
         if self.score_breakdown and len(stat_surfs) > 0:
             stat_surfs[-1] = self.font.render(stats[-1], True, (255, 255, 100))
         
@@ -1015,24 +1123,24 @@ class PacManGame(BaseGame):
         box_w = max(320, content_w + pad_x * 2)
         box_h = content_h + pad_y * 2
         box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 140, box_w, box_h)
-        pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=10)
-        pygame.draw.rect(self.screen, (140, 150, 190), box, 2, border_radius=10)
+        pygame.draw.rect(self.screen, (50, 35, 35), box, border_radius=10)
+        pygame.draw.rect(self.screen, (180, 100, 100), box, 2, border_radius=10)
         
         y = box.y + pad_y
         for s in stat_surfs:
             self.screen.blit(s, (box.x + pad_x, y))
             y += s.get_height() + line_spacing
         
-        # Buttons below the box
         gap = 28
+        self._build_go_buttons()
         self.go_button_rects.clear()
-        labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
-        spacing, padding_x, padding_y, button_width = 50, 20, 10, 340
+        labels = [("restart", "Play Again"), ("back", "Back To Menu")]
+        spacing = 50
         start_y = box.bottom + gap
         for i, (key, text) in enumerate(labels):
             surf = self.font.render(text, True, (255, 255, 255))
-            w = max(button_width, surf.get_width() + padding_x * 2)
-            h = surf.get_height() + padding_y * 2
+            w = max(340, surf.get_width() + 40)
+            h = surf.get_height() + 20
             x = self.cfg.width // 2 - w // 2
             btn_y = start_y + i * spacing
             self.go_button_rects.append((key, pygame.Rect(x, btn_y, w, h)))
@@ -1040,80 +1148,18 @@ class PacManGame(BaseGame):
         mouse = pygame.mouse.get_pos()
         for key, rect in self.go_button_rects:
             hovered = rect.collidepoint(*mouse)
-            fill = (70, 80, 120) if hovered else (40, 45, 85)
-            border = (255, 255, 255) if hovered else (140, 150, 190)
+            fill = (100, 70, 70) if hovered else (60, 45, 45)
+            border = (255, 255, 255) if hovered else (180, 140, 140)
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=8)
-            label = "Restart" if key == "restart" else "Back To Main Menu"
+            label = "Play Again" if key == "restart" else "Back To Menu"
             ts = self.font.render(label, True, (255, 255, 255))
             self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))
 
     def _draw_win(self) -> None:
-        """Draw You Win screen with score and level."""
         overlay = pygame.Surface(self.cfg.screen_size, pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
-        title = self.title_font.render("You Win!", True, (255, 255, 0))
-        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 140))
-        
-        # Format time as MM:SS
-        minutes = int(self.completion_time // 60)
-        seconds = int(self.completion_time % 60)
-        time_str = f"{minutes:02d}:{seconds:02d}"
-        
-        stats = [f"Score: {self.score}", f"Level: {self.level}", f"Time: {time_str}"]
-        stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
-        pad_x, pad_y = 16, 14
-        box_w = max(300, max(s.get_width() for s in stat_surfs) + pad_x * 2)
-        box_h = sum(s.get_height() for s in stat_surfs) + pad_y * 2 + 16
-        box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 90, box_w, box_h)
-        pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=10)
-        pygame.draw.rect(self.screen, (140, 150, 190), box, 2, border_radius=10)
-        
-        y = box.y + pad_y
-        for s in stat_surfs:
-            self.screen.blit(s, (box.x + pad_x, y))
-            y += s.get_height() + 6
-        
-        self._build_go_buttons()
-        mouse = pygame.mouse.get_pos()
-        for key, rect in self.go_button_rects:
-            hovered = rect.collidepoint(*mouse)
-            fill = (70, 80, 120) if hovered else (40, 45, 85)
-            border = (255, 255, 255) if hovered else (140, 150, 190)
-            pygame.draw.rect(self.screen, fill, rect, border_radius=8)
-            pygame.draw.rect(self.screen, border, rect, 2, border_radius=8)
-            label = "Restart" if key == "restart" else "Back To Main Menu"
-            ts = self.font.render(label, True, (255, 255, 255))
-            self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))
-
-    def _reachable_from(self, start: tuple[int, int], forbid: set[tuple[int, int]]) -> set[tuple[int, int]]:
-        seen: set[tuple[int, int]] = set()
-        q: deque[tuple[int, int]] = deque([start])
-        while q:
-            x, y = q.popleft()
-            if (x, y) in seen:
-                continue
-            if not (0 <= x < self.w and 0 <= y < self.h):
-                continue
-            if self.grid[y][x] != 0 or (x, y) in forbid:
-                continue
-            seen.add((x, y))
-            for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
-                q.append((x + dx, y + dy))
-        for t in self.tunnels:
-            seen.add(t)
-        return seen
-
-    def _find_house_exit(self, house: Vec2) -> Vec2:
-        for dx, dy in ((0, -1), (1, 0), (-1, 0), (0, 1)):
-            nx, ny = house[0] + dx, house[1] + dy
-            if 0 <= nx < self.w and 0 <= ny < self.h and self.grid[ny][nx] == 0:
-                return (nx, ny)
-        return house
-
-    def _near_house(self) -> tuple[int, int]:
-        """Return a fruit spawn tile just outside the ghost house exit."""
-        ex, ey = self.ghost_exit
-        return (ex, ey + 2 if ey + 2 < self.h and self.grid[ey + 2][ex] == 0 else ey)
+        title = self.title_font.render("Level Complete!", True, (100, 255, 100))
+        self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 60))

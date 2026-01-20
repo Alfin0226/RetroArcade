@@ -16,6 +16,99 @@ SI_BUNKER_COLOR = (50, 200, 50)
 SI_MYSTERY_COLOR = (255, 0, 255)
 SI_MYSTERY_DETAIL_COLOR = (255, 150, 255)
 
+# Enemy type colors (7 types)
+ENEMY_COLORS = [
+    (255, 80, 80),    # Type 0 - Red
+    (80, 255, 80),    # Type 1 - Green
+    (80, 80, 255),    # Type 2 - Blue
+    (255, 255, 80),   # Type 3 - Yellow
+    (255, 80, 255),   # Type 4 - Magenta
+    (80, 255, 255),   # Type 5 - Cyan
+    (255, 165, 80),   # Type 6 - Orange
+]
+
+# Pixel art patterns for 7 enemy types (each is a list of rows, 1 = filled, 0 = empty)
+# Scale: 4 pixels per cell, patterns are roughly 11x8 cells
+ENEMY_PATTERNS = [
+    # Type 0 - Classic squid (top row enemy)
+    [
+        [0,0,0,1,1,0,0,0],
+        [0,0,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,0],
+        [1,1,0,1,1,0,1,1],
+        [1,1,1,1,1,1,1,1],
+        [0,0,1,0,0,1,0,0],
+        [0,1,0,1,1,0,1,0],
+        [1,0,1,0,0,1,0,1],
+    ],
+    # Type 1 - Crab style
+    [
+        [0,0,1,0,0,0,1,0,0],
+        [0,0,0,1,0,1,0,0,0],
+        [0,0,1,1,1,1,1,0,0],
+        [0,1,1,0,1,0,1,1,0],
+        [1,1,1,1,1,1,1,1,1],
+        [1,0,1,1,1,1,1,0,1],
+        [1,0,1,0,0,0,1,0,1],
+        [0,0,0,1,1,1,0,0,0],
+    ],
+    # Type 2 - Octopus style
+    [
+        [0,0,0,0,1,1,0,0,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,0,0,0,0,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,0,0,1,1,0,0],
+        [1,1,0,0,0,0,0,0,1,1],
+    ],
+    # Type 3 - Skull style
+    [
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,0,0,0,0,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,0,1,1,0,0,1,1,0,0],
+        [0,1,1,0,1,1,0,1,1,0],
+        [1,1,0,0,0,0,0,0,1,1],
+    ],
+    # Type 4 - Bug style
+    [
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [1,1,0,1,1,1,1,0,1,1],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,1,1,1,0,0,1,1,1,0],
+        [0,0,1,0,0,0,0,1,0,0],
+        [0,1,0,0,0,0,0,0,1,0],
+        [0,0,1,0,0,0,0,1,0,0],
+    ],
+    # Type 5 - Robot style
+    [
+        [0,1,1,1,1,1,1,1,1,0],
+        [1,1,1,1,1,1,1,1,1,1],
+        [1,1,0,1,1,1,1,0,1,1],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,1,1,0,1,1,0,1,1,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,1,0,0,0,0,1,0,0],
+        [0,1,1,0,0,0,0,1,1,0],
+    ],
+    # Type 6 - Diamond style
+    [
+        [0,0,0,0,1,1,0,0,0,0],
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,1,0,1,1,0,1,1,0],
+        [1,1,1,1,1,1,1,1,1,1],
+        [0,1,0,1,1,1,1,0,1,0],
+        [0,0,1,0,0,0,0,1,0,0],
+        [0,1,0,0,0,0,0,0,1,0],
+    ],
+]
+
 @register_game("space_invaders")
 class SpaceInvadersGame(BaseGame):
     def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
@@ -23,7 +116,7 @@ class SpaceInvadersGame(BaseGame):
         self.rules = get_rules("space_invaders").data
         self.player_rect = pygame.Rect(cfg.width // 2 - 25, cfg.height - 80, 50, 20)
         self.bullets: list[pygame.Rect] = []
-        self.enemies: list[pygame.Rect] = []
+        self.enemies: list[tuple[pygame.Rect, int]] = []  # (rect, enemy_type)
         self.enemy_bullets: list[pygame.Rect] = []  # Enemy projectiles
         self.bunkers: list[list[pygame.Rect]] = []  # Defense bunkers (list of block lists)
         self.direction = 1
@@ -100,11 +193,15 @@ class SpaceInvadersGame(BaseGame):
         self.score_breakdown = None
 
     def _spawn_new_wave(self) -> None:
-        """Spawn a new wave of enemies."""
-        self.enemies = [
-            pygame.Rect(100 + x * 60, 80 + y * 40, 40, 24)
-            for y in range(4) for x in range(8)
-        ]
+        """Spawn a new wave of enemies with 7 rows (one for each type)."""
+        self.enemies = []
+        num_rows = 7
+        num_cols = 8
+        for y in range(num_rows):
+            enemy_type = y % 7  # Each row gets a different type
+            for x in range(num_cols):
+                rect = pygame.Rect(100 + x * 55, 60 + y * 36, 40, 28)
+                self.enemies.append((rect, enemy_type))
         self.direction = 1
 
     def _next_wave(self) -> None:
@@ -157,10 +254,10 @@ class SpaceInvadersGame(BaseGame):
         
         # Group enemies by column and pick the bottom-most in each column
         columns: dict[int, pygame.Rect] = {}
-        for enemy in self.enemies:
-            col_key = enemy.centerx // 60
-            if col_key not in columns or enemy.y > columns[col_key].y:
-                columns[col_key] = enemy
+        for enemy_rect, _ in self.enemies:
+            col_key = enemy_rect.centerx // 55
+            if col_key not in columns or enemy_rect.y > columns[col_key].y:
+                columns[col_key] = enemy_rect
         
         # Pick a random bottom enemy to shoot
         shooter = random.choice(list(columns.values()))
@@ -217,9 +314,9 @@ class SpaceInvadersGame(BaseGame):
         shift_down = False
         
         # Check if any enemy would go out of bounds
-        for enemy in self.enemies:
-            next_x = enemy.x + movement
-            if (self.direction > 0 and next_x + enemy.width >= self.cfg.width - 40) or \
+        for enemy_rect, _ in self.enemies:
+            next_x = enemy_rect.x + movement
+            if (self.direction > 0 and next_x + enemy_rect.width >= self.cfg.width - 40) or \
                (self.direction < 0 and next_x <= 40):
                 shift_down = True
                 break
@@ -227,19 +324,19 @@ class SpaceInvadersGame(BaseGame):
         if shift_down:
             # Reverse direction and move down
             self.direction *= -1
-            for enemy in self.enemies:
-                enemy.y += 20
+            for enemy_rect, _ in self.enemies:
+                enemy_rect.y += 20
         else:
             # Normal horizontal movement
-            for enemy in self.enemies:
-                enemy.x += movement
+            for enemy_rect, _ in self.enemies:
+                enemy_rect.x += movement
 
         # Player bullet collisions with enemies
         for bullet in list(self.bullets):
-            hits = [enemy for enemy in self.enemies if bullet.colliderect(enemy)]
+            hits = [(enemy_rect, enemy_type) for enemy_rect, enemy_type in self.enemies if bullet.colliderect(enemy_rect)]
             if hits:
                 self.score += invaders_score(ScoreEvent(enemies_destroyed=len(hits)))
-                self.enemies = [enemy for enemy in self.enemies if enemy not in hits]
+                self.enemies = [(r, t) for r, t in self.enemies if (r, t) not in hits]
                 if bullet in self.bullets:
                     self.bullets.remove(bullet)
                 continue
@@ -287,10 +384,10 @@ class SpaceInvadersGame(BaseGame):
                         break
 
         # Enemy collision with bunkers (destroy bunker blocks)
-        for enemy in self.enemies:
+        for enemy_rect, _ in self.enemies:
             for bunker in self.bunkers:
                 for block in list(bunker):
-                    if enemy.colliderect(block):
+                    if enemy_rect.colliderect(block):
                         bunker.remove(block)
 
         # Check if all enemies are defeated - spawn new wave
@@ -299,7 +396,8 @@ class SpaceInvadersGame(BaseGame):
             return
 
         # Enemy reaches player level
-        if rect_vs_many(self.player_rect, self.enemies):
+        enemy_rects = [r for r, _ in self.enemies]
+        if rect_vs_many(self.player_rect, enemy_rects):
             self.lives -= 1
             if self.lives <= 0:
                 self.game_over = True
@@ -310,8 +408,8 @@ class SpaceInvadersGame(BaseGame):
             self._respawn_player()
         
         # Check if enemies reached bottom
-        for enemy in self.enemies:
-            if enemy.bottom >= self.cfg.height - 100:
+        for enemy_rect, _ in self.enemies:
+            if enemy_rect.bottom >= self.cfg.height - 100:
                 self.game_over = True
                 self._calculate_final_score()
                 self.save_score()  # Save score to database
@@ -326,7 +424,9 @@ class SpaceInvadersGame(BaseGame):
         # Draw scoreboard
         score_text = self.font.render(f"SCORE: {self.score}", True, SI_TEXT_COLOR)
         lives_text = self.font.render(f"LIVES: {self.lives}", True, SI_TEXT_COLOR)
+        wave_text = self.font.render(f"WAVE: {self.wave}", True, SI_TEXT_COLOR)
         self.screen.blit(score_text, (10, 10))
+        self.screen.blit(wave_text, (self.cfg.width // 2 - wave_text.get_width() // 2, 10))
         self.screen.blit(lives_text, (self.cfg.width - 120, 10))
         
         # Draw player
@@ -340,9 +440,9 @@ class SpaceInvadersGame(BaseGame):
         for bullet in self.enemy_bullets:
             pygame.draw.rect(self.screen, SI_ENEMY_BULLET_COLOR, bullet)
         
-        # Draw enemies
-        for enemy in self.enemies:
-            pygame.draw.rect(self.screen, SI_ENEMY_COLOR, enemy)
+        # Draw enemies with pixel art
+        for enemy_rect, enemy_type in self.enemies:
+            self._draw_enemy(enemy_rect, enemy_type)
         
         # Draw bunkers
         for bunker in self.bunkers:
@@ -360,6 +460,29 @@ class SpaceInvadersGame(BaseGame):
         if self.game_over:
             self._draw_game_over()
 
+    def _draw_enemy(self, rect: pygame.Rect, enemy_type: int) -> None:
+        """Draw an enemy using pixel art pattern."""
+        pattern = ENEMY_PATTERNS[enemy_type]
+        color = ENEMY_COLORS[enemy_type]
+        
+        # Calculate pixel size based on rect and pattern dimensions
+        pattern_height = len(pattern)
+        pattern_width = len(pattern[0]) if pattern else 0
+        
+        if pattern_width == 0 or pattern_height == 0:
+            return
+        
+        pixel_w = rect.width / pattern_width
+        pixel_h = rect.height / pattern_height
+        
+        for row_idx, row in enumerate(pattern):
+            for col_idx, pixel in enumerate(row):
+                if pixel:
+                    px = rect.x + col_idx * pixel_w
+                    py = rect.y + row_idx * pixel_h
+                    pygame.draw.rect(self.screen, color, 
+                                   pygame.Rect(int(px), int(py), int(pixel_w) + 1, int(pixel_h) + 1))
+
     def _build_go_buttons(self) -> None:
         self.go_button_rects.clear()
         labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
@@ -375,12 +498,13 @@ class SpaceInvadersGame(BaseGame):
 
     def _calculate_final_score(self) -> None:
         # Calculate score breakdown with all bonuses
+        login_streak, daily_streak = self.get_user_streaks()
         self.score_breakdown = calculate_score_breakdown(
             base_score=self.score,
             difficulty=self.cfg.difficulty,
             levels=self.wave,
-            login_streak=0,  # TODO: fetch from database
-            daily_streak=0,  # TODO: fetch from database
+            login_streak=login_streak,
+            daily_streak=daily_streak,
             time_played=int(self.time_played)
         )
         # Update score to final score for saving

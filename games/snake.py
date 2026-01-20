@@ -187,12 +187,13 @@ class SnakeGame(BaseGame):
         # Calculate score breakdown with all bonuses
         # Snake doesn't have levels, so use fruits_eaten as a proxy
         level_proxy = max(1, self.fruits_eaten // 5)
+        login_streak, daily_streak = self.get_user_streaks()
         self.score_breakdown = calculate_score_breakdown(
             base_score=self.score,
             difficulty=self.cfg.difficulty,
             levels=level_proxy,
-            login_streak=0,  # TODO: fetch from database
-            daily_streak=0,  # TODO: fetch from database
+            login_streak=login_streak,
+            daily_streak=daily_streak,
             time_played=int(self.time_played)
         )
         # Update score to final score for saving
