@@ -1,13 +1,7 @@
 """
 Hybrid Mode 1: Snake + Pac-Man
-
-Combines Pac-Man's maze-based movement with Snake-style collectibles.
-The player navigates a Pac-Man maze collecting apples instead of pellets.
-Ghosts behave normally with power-up mechanics intact.
-
-Win condition: Collect all apples
-Lose condition: Collision with a ghost (unless powered up)
 """
+
 from __future__ import annotations
 import math
 import random

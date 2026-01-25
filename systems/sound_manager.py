@@ -5,15 +5,6 @@ import pygame
 from settings import SOUND_DIR
 
 class SoundManager:
-    # Centralized sound manager for all game audio.
-    # Sound assets organized by game:
-    # - Tetris: line_clear, game_over
-    # - Snake: eat, crash
-    # - Pac-Man: chomp, siren, eat_ghost
-    # - Space Invaders: shoot, explosion
-    # - General: power_up, menu_select
-    
-    # Default sound file mappings (key -> filename)
     DEFAULT_SOUNDS = {
         # Tetris sounds
         "line_clear": "line_clear.wav",
@@ -62,6 +53,8 @@ class SoundManager:
             print(f"[SoundManager] Error loading {filename}: {e}")
         except Exception as e:
             print(f"[SoundManager] Unexpected error loading {filename}: {e}")
+
+        print(f"Sound assets loaded: {len(self.sounds)} sounds.")
 
     def play(self, key: str) -> None:
         # Play a sound effect by key name.

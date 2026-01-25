@@ -1,31 +1,7 @@
 """
 Hybrid Mode 4: Tetris + Space Invaders
-
-Combines Tetris gameplay with Space Invaders theming by applying Space Invader–
-inspired visuals to the Tetris environment. Tetrominoes, background elements,
-and animations are reskinned to reflect the Space Invaders theme while all core
-Tetris mechanics remain unchanged.
-
-⚠️ Important: This is a VISUAL-ONLY theme.
-⚠️ No enemies, no shooting, no AI - pure Tetris mechanics.
-
-What explicitly does NOT change:
-- Gravity
-- Rotation logic
-- Collision detection
-- Grid size
-- Scoring formula
-- Speed curve
-
-Design justification:
-The Tetris and Space Invaders hybrid was implemented as a visual-only theme.
-Tetrominoes and animations were reskinned using Space Invader-inspired assets
-while all Tetris mechanics remained unchanged. This design avoids conflicts
-between gravity-based gameplay and shooter mechanics, ensuring clarity and balance.
-
-One-line summary:
-Space Invaders elements are applied exclusively to the visual layer of Tetris.
 """
+
 from __future__ import annotations
 import random
 import math
@@ -122,15 +98,6 @@ class Star:
 
 @register_game("hybrid_space_tetris")
 class HybridSpaceTetrisGame(BaseGame):
-    """
-    Hybrid Mode 4: Tetris with Space Invaders visual theme.
-    
-    All Tetris mechanics remain unchanged. Only visuals are modified:
-    - Tetrominoes rendered as Space Invader pixel sprites
-    - Space-themed starfield background
-    - Line clear shows "explosion" particle effects
-    - Arcade-style UI theming
-    """
     
     def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
         super().__init__(screen, cfg, sounds, user_id=user_id)

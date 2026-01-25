@@ -1,23 +1,7 @@
 """
 Hybrid Mode 3: Pac-Man + Space Invaders
-
-Combines Pac-Man gameplay with Space Invaders theming by replacing ghosts
-with Space Invader enemy sprites visually. All enemy movement, collision
-detection, and power-up behaviour remain identical to the original Pac-Man.
-
-⚠️ Important: Sprite changes do not affect collision detection.
-⚠️ No shooting mechanics - enemies follow maze-constrained movement paths.
-
-Win condition: All collectibles cleared
-Lose condition: Collision with an invader when not powered
-
-Design justification:
-Several hybrid approaches were considered. Options involving shooting mechanics
-or free enemy movement were rejected due to conflicts with Pac-Man's maze-based
-structure. The final implementation replaces Pac-Man ghosts with Space Invader
-enemies visually only, preserving all original mechanics while introducing
-thematic variety.
 """
+
 from __future__ import annotations
 import math
 import random
@@ -79,13 +63,6 @@ class Invader:
 
 @register_game("hybrid_pacman_invaders")
 class HybridPacManInvadersGame(BaseGame):
-    """
-    Hybrid Mode 3: Pac-Man with Space Invader enemies.
-    
-    Ghosts are visually replaced with Space Invader sprites.
-    All enemy movement, collision detection, and power-up behaviour
-    remain identical to the original Pac-Man rules.
-    """
     
     def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
         super().__init__(screen, cfg, sounds, user_id=user_id)

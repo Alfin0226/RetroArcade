@@ -1,15 +1,7 @@
 """
 Hybrid Mode 2: Snake + Tetris
-
-Combines standard Tetris gameplay with a Snake-themed visual background.
-The Snake map is rendered as a decorative layer behind the Tetris board.
-All Tetris mechanics remain completely unchanged.
-
-⚠️ No modifications were made to the Tetris logic for this hybrid.
-
-Win/Lose conditions: Same as standard Tetris
-Snake contributes atmosphere, not mechanics.
 """
+
 from __future__ import annotations
 import random
 import pygame
