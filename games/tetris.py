@@ -16,13 +16,13 @@ TETROMINOES = {
 }
 
 SHAPE_COLORS = {
-    "I": (128, 128, 128),
-    "O": (128, 128, 128),
-    "L": (128, 128, 128),
-    "J": (128, 128, 128),
-    "T": (128, 128, 128),
-    "S": (128, 128, 128),
-    "Z": (128, 128, 128),
+    "I": (0, 240, 240),    # Cyan
+    "O": (240, 240, 0),    # Yellow
+    "L": (240, 160, 0),    # Orange
+    "J": (0, 0, 240),      # Blue
+    "T": (160, 0, 240),    # Purple
+    "S": (0, 240, 0),      # Green
+    "Z": (240, 0, 0),      # Red
 }
 
 @register_game("tetris")
@@ -54,6 +54,14 @@ class TetrisGame(BaseGame):
         # Space bar hold protection
         self.space_pressed: bool = False
         
+        # Hold piece system 
+        self.held_piece: str | None = None  # Shape key of held piece
+        self.can_hold: bool = True  # Restrict holding to once per drop cycle
+        
+        # Ghost piece 
+        self.show_ghost: bool = True  # Toggle for ghost piece visibility
+        self.ghost_color_alpha: int = 80  # Transparency for ghost piece
+        
         # Line clear animation state
         self.clearing_rows: list[int] = []
         self.clearing: bool = False
@@ -76,6 +84,9 @@ class TetrisGame(BaseGame):
         self.game_over = False
         self.go_button_rects.clear()
         self.space_pressed = False
+        # Reset hold piece system
+        self.held_piece = None
+        self.can_hold = True
         # Reset animation state
         self.clearing_rows = []
         self.clearing = False
@@ -90,6 +101,8 @@ class TetrisGame(BaseGame):
         self.next_shape_key = random.choice(list(TETROMINOES.keys()))
         self.current_piece = list(TETROMINOES[self.current_shape_key])
         self.piece_pos = [self.grid_width // 2 - 2, 0]
+        # Reset hold ability when new piece spawns (lock resets it)
+        self.can_hold = True
         # If spawn position is blocked then is Game Over
         if not self.can_move(0, 0, self.current_piece, self.piece_pos):
             self.game_over = True
@@ -121,6 +134,48 @@ class TetrisGame(BaseGame):
                 self.piece_pos[0] += kick_x
                 return
         # rotation fails -> keep as is
+
+    def hold_piece(self) -> None:
+        """Hold piece system: swap current piece with held piece (once per drop)."""
+        # Can only hold once per drop cycle
+        if not self.can_hold or self.clearing or self.game_over:
+            return
+        if not self.current_shape_key:
+            return
+        
+        # Mark that we've used our hold for this piece
+        self.can_hold = False
+        
+        if self.held_piece is None:
+            # First hold: store current piece and spawn next
+            self.held_piece = self.current_shape_key
+            self.spawn_piece()
+            # Prevent immediate re-hold after spawn
+            self.can_hold = False
+        else:
+            # Swap: exchange current with held
+            old_held = self.held_piece
+            self.held_piece = self.current_shape_key
+            # Spawn the previously held piece
+            self.current_shape_key = old_held
+            self.current_piece = list(TETROMINOES[old_held])
+            self.piece_pos = [self.grid_width // 2 - 2, 0]
+            # Check if swap position is valid
+            if not self.can_move(0, 0, self.current_piece, self.piece_pos):
+                # If blocked, this shouldn't happen often but handle gracefully
+                self.game_over = True
+                self._calculate_final_score()
+                self.save_score()
+
+    def get_ghost_position(self) -> int:
+        if not self.current_piece:
+            return self.piece_pos[1]
+        
+        ghost_y = self.piece_pos[1]
+        # Find the lowest valid Y position
+        while self.can_move(0, ghost_y - self.piece_pos[1] + 1, self.current_piece, self.piece_pos):
+            ghost_y += 1
+        return ghost_y
 
     def lock_piece(self) -> None:
         # Merge piece into grid
@@ -200,6 +255,12 @@ class TetrisGame(BaseGame):
                 if not self.space_pressed:
                     self.space_pressed = True
                     self.hard_drop()
+            elif event.key == pygame.K_c:
+                # Hold piece system - swap current with held piece
+                self.hold_piece()
+            elif event.key == pygame.K_g:
+                # Toggle ghost piece visibility
+                self.show_ghost = not self.show_ghost
         elif event.type == pygame.KEYUP:
             if event.key in (pygame.K_DOWN, pygame.K_s):
                 self.soft_drop = False
@@ -255,6 +316,24 @@ class TetrisGame(BaseGame):
                 s.fill(overlay_color)
                 self.screen.blit(s, row_rect.topleft)
 
+        # Ghost piece (visual landing indicator) - drawn BEFORE current piece
+        if self.show_ghost and self.current_piece and self.current_shape_key and not self.clearing:
+            ghost_y = self.get_ghost_position()
+            # Only draw ghost if it's below the current piece
+            if ghost_y > self.piece_pos[1]:
+                color = SHAPE_COLORS.get(self.current_shape_key, (200, 120, 255))
+                # Create semi-transparent ghost color
+                ghost_surface = pygame.Surface((cell - 1, cell - 1), pygame.SRCALPHA)
+                ghost_color = (*color, self.ghost_color_alpha)
+                ghost_surface.fill(ghost_color)
+                for x, y in self.current_piece:
+                    px = ox + (self.piece_pos[0] + x) * cell
+                    py = oy + (ghost_y + y) * cell
+                    self.screen.blit(ghost_surface, (px, py))
+                    # Draw dotted outline for better visibility
+                    outline_rect = pygame.Rect(px, py, cell - 1, cell - 1)
+                    pygame.draw.rect(self.screen, color, outline_rect, width=2)
+
         # Current piece (use shape's color) — not drawn during clearing
         if self.current_piece and self.current_shape_key:
             color = SHAPE_COLORS.get(self.current_shape_key, (200, 120, 255))
@@ -276,10 +355,38 @@ class TetrisGame(BaseGame):
         board_w = self.grid_width * cell
         panel_x = ox + board_w + 24
         panel_y = oy
-        # Next box
+        
+        # Hold box (Solution 1 - Hold Piece System)
+        hold_label = self.hud_font.render("Hold [C]", True, (255, 255, 255))
+        self.screen.blit(hold_label, (panel_x, panel_y))
+        hold_box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
+        # Dim the box if hold is not available this cycle
+        box_color = (35, 40, 80) if self.can_hold else (25, 30, 60)
+        border_color = (140, 150, 190) if self.can_hold else (80, 90, 120)
+        pygame.draw.rect(self.screen, box_color, hold_box, border_radius=8)
+        pygame.draw.rect(self.screen, border_color, hold_box, width=2, border_radius=8)
+        # Draw held shape if any
+        if self.held_piece:
+            pts = TETROMINOES[self.held_piece]
+            color = SHAPE_COLORS.get(self.held_piece, (200, 120, 255))
+            if not self.can_hold:
+                # Dim the color when hold is unavailable
+                color = tuple(max(0, c - 60) for c in color)
+            minx = min(x for x, _ in pts)
+            miny = min(y for _, y in pts)
+            norm = [(x - minx, y - miny) for x, y in pts]
+            base_x = hold_box.x + (hold_box.width - 4 * cell) // 2
+            base_y = hold_box.y + (hold_box.height - 4 * cell) // 2
+            for x, y in norm:
+                rx = base_x + x * cell
+                ry = base_y + y * cell
+                pygame.draw.rect(self.screen, color, pygame.Rect(rx, ry, cell - 1, cell - 1))
+        
+        # Next box (moved down to make room for hold box)
+        next_y = hold_box.bottom + 20
         next_label = self.hud_font.render("Next", True, (255, 255, 255))
-        self.screen.blit(next_label, (panel_x, panel_y))
-        box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
+        self.screen.blit(next_label, (panel_x, next_y))
+        box = pygame.Rect(panel_x, next_y + 28, 120, 100)
         pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=8)
         pygame.draw.rect(self.screen, (140, 150, 190), box, width=2, border_radius=8)
         # Draw next shape centered in box (use shape's color)
@@ -297,6 +404,7 @@ class TetrisGame(BaseGame):
                 rx = base_x + x * cell
                 ry = base_y + y * cell
                 pygame.draw.rect(self.screen, color, pygame.Rect(rx, ry, cell - 1, cell - 1))
+        
         # Score, Level, Lines
         score_y = box.bottom + 20
         score_surf = self.hud_font.render(f"Score: {self.score}", True, (255, 255, 255))
@@ -305,6 +413,12 @@ class TetrisGame(BaseGame):
         self.screen.blit(score_surf, (panel_x, score_y))
         self.screen.blit(lvl_surf, (panel_x, score_y + 30))
         self.screen.blit(lines_surf, (panel_x, score_y + 60))
+        
+        # Ghost toggle hint
+        ghost_status = "ON" if self.show_ghost else "OFF"
+        ghost_color = (150, 255, 150) if self.show_ghost else (255, 150, 150)
+        ghost_surf = self.hud_font.render(f"Ghost [G]: {ghost_status}", True, ghost_color)
+        self.screen.blit(ghost_surf, (panel_x, score_y + 100))
 
     # ----- Game Over Overlay -----
     def _calculate_final_score(self) -> None:

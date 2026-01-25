@@ -64,6 +64,9 @@ class Settings:
     # Difficulty setting
     difficulty: DifficultyLevel = "intermediate"
     
+    # Snake-specific difficulty (separate from common difficulty)
+    snake_difficulty: DifficultyLevel = "intermediate"
+    
     # Debug/display settings
     show_fps: bool = False
     

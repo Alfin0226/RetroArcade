@@ -6,20 +6,44 @@ from systems.rules import get_rules
 from systems.scoring import ScoreEvent, snake_score, ScoreBreakdown, calculate_score_breakdown
 from systems.collision import point_in_grid
 
+# Map size configurations
+MAP_SIZES = {
+    "easy": (35, 25),    # Large map - more space to maneuver
+    "normal": (30, 20),  # Standard map - balanced challenge
+    "hard": (20, 15),    # Small map - fast collisions, high challenge
+}
+
+# Speed configurations per map size 
+MAP_SPEEDS = {
+    "easy": 12,    # Slower speed for easy mode
+    "normal": 15,  # Standard speed
+    "hard": 20,    # Faster speed for hard mode
+}
+
 @register_game("snake")
 class SnakeGame(BaseGame):
-    def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
+    def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None, map_size: str = "normal"):
         super().__init__(screen, cfg, sounds, user_id=user_id)
         self.rules = get_rules("snake").data
-        self.grid_w, self.grid_h = self.rules["grid_size"]
+        
+        # Solution 2: Dynamic Map Generation based on selected map size
+        self.map_size_key = map_size  # Store the selected map size key
+        self.grid_w, self.grid_h = MAP_SIZES.get(map_size, MAP_SIZES["normal"])
+        
+        # Calculate cell size to fit the map on screen with proper margins
+        self._calculate_cell_size()
+        
         self.direction = (1, 0)
-        self.snake = [(5, 5), (4, 5), (3, 5)]
+        # Adjust starting snake position based on map size
+        start_x = min(5, self.grid_w // 4)
+        start_y = self.grid_h // 2
+        self.snake = [(start_x, start_y), (start_x - 1, start_y), (start_x - 2, start_y)]
         self.apple = (10, 8)
         self.timer = 0.0
-        self.speed = self.rules.get("fps", self.rules.get("speed", 15))  # Support both keys
+        # Use map-specific speed or fall back to rules
+        self.speed = MAP_SPEEDS.get(map_size, self.rules.get("fps", self.rules.get("speed", 15)))
+        
         # Background style
-        self.cell = 24
-        self.offset = pygame.Vector2(80, 80)
         self.bg_light = (176, 221, 120)
         self.bg_dark = (162, 207, 106)
         self.bg_border = (46, 102, 46)
@@ -41,11 +65,34 @@ class SnakeGame(BaseGame):
         # Time tracking and score breakdown
         self.time_played: float = 0.0
         self.score_breakdown: ScoreBreakdown | None = None
+    
+    def _calculate_cell_size(self) -> None:
+        # Available space (with margins)
+        margin_x = 160  # Space for HUD on sides
+        margin_y = 160  # Space for top/bottom UI
+        available_w = self.cfg.width - margin_x
+        available_h = self.cfg.height - margin_y
+        
+        # Calculate cell size to fit grid
+        cell_w = available_w // self.grid_w
+        cell_h = available_h // self.grid_h
+        self.cell = min(cell_w, cell_h, 24)  # Cap at 24 for visual consistency
+        self.cell = max(self.cell, 12)  # Minimum cell size
+        
+        # Center the grid on screen
+        grid_pixel_w = self.grid_w * self.cell
+        grid_pixel_h = self.grid_h * self.cell
+        offset_x = (self.cfg.width - grid_pixel_w) // 2
+        offset_y = (self.cfg.height - grid_pixel_h) // 2 + 20  # Slight offset for HUD
+        self.offset = pygame.Vector2(offset_x, offset_y)
 
     def reset(self) -> None:
         super().reset()
         self.direction = (1, 0)
-        self.snake = [(5, 5), (4, 5), (3, 5)]
+        # Reset snake position based on current map size
+        start_x = min(5, self.grid_w // 4)
+        start_y = self.grid_h // 2
+        self.snake = [(start_x, start_y), (start_x - 1, start_y), (start_x - 2, start_y)]
         self.spawn_apple()
         self.timer = 0.0
         self.game_over = False
@@ -188,9 +235,11 @@ class SnakeGame(BaseGame):
         # Snake doesn't have levels, so use fruits_eaten as a proxy
         level_proxy = max(1, self.fruits_eaten // 5)
         login_streak, daily_streak = self.get_user_streaks()
+        # Use snake-specific difficulty (set by map selection) instead of common difficulty
+        snake_difficulty = getattr(self.cfg, 'snake_difficulty', self.cfg.difficulty)
         self.score_breakdown = calculate_score_breakdown(
             base_score=self.score,
-            difficulty=self.cfg.difficulty,
+            difficulty=snake_difficulty,
             levels=level_proxy,
             login_streak=login_streak,
             daily_streak=daily_streak,
@@ -210,8 +259,13 @@ class SnakeGame(BaseGame):
         title = font.render("Game Over", True, (255, 255, 255))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 
-        # Stats with score breakdown
-        stats = [f"Apples Eaten: {self.fruits_eaten}"]
+        # Stats with score breakdown - include map size info (Solution 2)
+        map_name = self.map_size_key.title()
+        map_dimensions = f"{self.grid_w}x{self.grid_h}"
+        stats = [
+            f"Map: {map_name} ({map_dimensions})",
+            f"Apples Eaten: {self.fruits_eaten}"
+        ]
         if self.score_breakdown:
             stats.extend(self.score_breakdown.as_display_lines())
         else:
@@ -296,6 +350,18 @@ class SnakeGame(BaseGame):
         ty = apple_rect.y + (apple_rect.height - text_surf.get_height()) // 2
         self.screen.blit(shadow, (tx + 2, ty + 2))
         self.screen.blit(text_surf, (tx, ty))
+        
+        # Map size indicator 
+        map_name = self.map_size_key.title()
+        map_indicator = f"{map_name} ({self.grid_w}x{self.grid_h})"
+        small_font = pygame.font.SysFont("arial", 18)
+        map_surf = small_font.render(map_indicator, True, (200, 220, 200))
+        map_x = self.cfg.width - map_surf.get_width() - 20
+        map_y = 16
+        # Draw background for readability
+        bg_rect = pygame.Rect(map_x - 6, map_y - 2, map_surf.get_width() + 12, map_surf.get_height() + 4)
+        pygame.draw.rect(self.screen, (30, 60, 40, 180), bg_rect, border_radius=4)
+        self.screen.blit(map_surf, (map_x, map_y))
 
     def draw_snake(self) -> None:
         cell = self.cell

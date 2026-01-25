@@ -132,6 +132,14 @@ class HybridSpaceTetrisGame(BaseGame):
         # Space bar hold protection
         self.space_pressed: bool = False
         
+        # Hold piece system (Solution 1)
+        self.held_piece: str | None = None
+        self.can_hold: bool = True
+        
+        # Ghost piece (Solution 1 & 3)
+        self.show_ghost: bool = True
+        self.ghost_color_alpha: int = 80
+        
         # Line clear animation state
         self.clearing_rows: list[int] = []
         self.clearing: bool = False
@@ -198,6 +206,9 @@ class HybridSpaceTetrisGame(BaseGame):
         self.game_over = False
         self.go_button_rects.clear()
         self.space_pressed = False
+        # Reset hold piece system
+        self.held_piece = None
+        self.can_hold = True
         self.clearing_rows = []
         self.clearing = False
         self.clear_anim_timer = 0.0
@@ -215,6 +226,8 @@ class HybridSpaceTetrisGame(BaseGame):
         self.next_shape_key = random.choice(list(TETROMINOES.keys()))
         self.current_piece = list(TETROMINOES[self.current_shape_key])
         self.piece_pos = [self.grid_width // 2 - 2, 0]
+        # Reset hold ability when new piece spawns
+        self.can_hold = True
         if not self.can_move(0, 0, self.current_piece, self.piece_pos):
             self.game_over = True
             self._calculate_final_score()
@@ -243,6 +256,40 @@ class HybridSpaceTetrisGame(BaseGame):
                 self.current_piece = rotated
                 self.piece_pos[0] += kick_x
                 return
+
+    def hold_piece(self) -> None:
+        """Hold piece system: swap current piece with held piece (once per drop)."""
+        if not self.can_hold or self.clearing or self.game_over:
+            return
+        if not self.current_shape_key:
+            return
+        
+        self.can_hold = False
+        
+        if self.held_piece is None:
+            self.held_piece = self.current_shape_key
+            self.spawn_piece()
+            self.can_hold = False
+        else:
+            old_held = self.held_piece
+            self.held_piece = self.current_shape_key
+            self.current_shape_key = old_held
+            self.current_piece = list(TETROMINOES[old_held])
+            self.piece_pos = [self.grid_width // 2 - 2, 0]
+            if not self.can_move(0, 0, self.current_piece, self.piece_pos):
+                self.game_over = True
+                self._calculate_final_score()
+                self.save_score()
+
+    def get_ghost_position(self) -> int:
+        """Calculate the Y position where the current piece would land."""
+        if not self.current_piece:
+            return self.piece_pos[1]
+        
+        ghost_y = self.piece_pos[1]
+        while self.can_move(0, ghost_y - self.piece_pos[1] + 1, self.current_piece, self.piece_pos):
+            ghost_y += 1
+        return ghost_y
 
     def lock_piece(self) -> None:
         """Lock piece into grid (unchanged logic)."""
@@ -365,6 +412,10 @@ class HybridSpaceTetrisGame(BaseGame):
                 if not self.space_pressed:
                     self.space_pressed = True
                     self.hard_drop()
+            elif event.key == pygame.K_c:
+                self.hold_piece()
+            elif event.key == pygame.K_g:
+                self.show_ghost = not self.show_ghost
         elif event.type == pygame.KEYUP:
             if event.key in (pygame.K_DOWN, pygame.K_s):
                 self.soft_drop = False
@@ -420,6 +471,12 @@ class HybridSpaceTetrisGame(BaseGame):
         
         # Draw particles
         self._draw_particles()
+        
+        # Draw ghost piece (visual landing indicator)
+        if self.show_ghost and self.current_piece and self.current_shape_key and not self.clearing:
+            ghost_y = self.get_ghost_position()
+            if ghost_y > self.piece_pos[1]:
+                self._draw_ghost_piece(self.current_piece, ghost_y, self.current_shape_key)
         
         # Draw current piece
         if self.current_piece and self.current_shape_key:
@@ -545,6 +602,23 @@ class HybridSpaceTetrisGame(BaseGame):
             rect = pygame.Rect(px, py, cell - 1, cell - 1)
             self._draw_invader_block(rect, shape_key)
 
+    def _draw_ghost_piece(self, piece: list[tuple[int, int]], ghost_y: int, shape_key: str) -> None:
+        """Draw the ghost piece (landing indicator) with transparency."""
+        ox, oy = self.offset_x, self.offset_y
+        cell = self.cell
+        color = INVADER_COLORS.get(shape_key, (200, 200, 200))
+        
+        for x, y in piece:
+            px = ox + (self.piece_pos[0] + x) * cell
+            py = oy + (ghost_y + y) * cell
+            rect = pygame.Rect(px, py, cell - 1, cell - 1)
+            # Draw semi-transparent outline
+            ghost_surface = pygame.Surface((cell - 1, cell - 1), pygame.SRCALPHA)
+            ghost_color = (*color, self.ghost_color_alpha)
+            ghost_surface.fill(ghost_color)
+            self.screen.blit(ghost_surface, rect.topleft)
+            pygame.draw.rect(self.screen, color, rect, width=2)
+
     def _draw_particles(self) -> None:
         """Draw explosion particles."""
         for p in self.particles:
@@ -568,11 +642,44 @@ class HybridSpaceTetrisGame(BaseGame):
         mode_label = self.hud_font.render("SPACE TETRIS", True, (255, 100, 100))
         self.screen.blit(mode_label, (self.cfg.width // 2 - mode_label.get_width() // 2, 8))
         
-        # Next piece box
-        next_label = self.hud_font.render("NEXT", True, (100, 255, 100))
-        self.screen.blit(next_label, (panel_x, panel_y))
+        # Hold piece box (Solution 1)
+        hold_label = self.hud_font.render("HOLD [C]", True, (100, 200, 255) if self.can_hold else (80, 100, 130))
+        self.screen.blit(hold_label, (panel_x, panel_y))
         
-        box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
+        hold_box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
+        box_color = (15, 20, 40) if self.can_hold else (10, 15, 25)
+        border_color = (80, 200, 255) if self.can_hold else (40, 80, 120)
+        pygame.draw.rect(self.screen, box_color, hold_box, border_radius=8)
+        pygame.draw.rect(self.screen, border_color, hold_box, width=2, border_radius=8)
+        
+        # Draw held piece
+        if self.held_piece:
+            pts = TETROMINOES[self.held_piece]
+            minx = min(x for x, _ in pts)
+            miny = min(y for _, y in pts)
+            norm = [(x - minx, y - miny) for x, y in pts]
+            
+            preview_cell = 20
+            base_x = hold_box.x + (hold_box.width - 4 * preview_cell) // 2
+            base_y = hold_box.y + (hold_box.height - 4 * preview_cell) // 2
+            
+            for x, y in norm:
+                rect = pygame.Rect(base_x + x * preview_cell, base_y + y * preview_cell, 
+                                   preview_cell - 1, preview_cell - 1)
+                # Dim if hold is unavailable
+                if self.can_hold:
+                    self._draw_invader_block(rect, self.held_piece)
+                else:
+                    color = INVADER_COLORS.get(self.held_piece, (200, 200, 200))
+                    dim_color = tuple(max(0, c - 80) for c in color)
+                    pygame.draw.rect(self.screen, dim_color, rect, border_radius=2)
+        
+        # Next piece box (moved down)
+        next_y = hold_box.bottom + 20
+        next_label = self.hud_font.render("NEXT", True, (100, 255, 100))
+        self.screen.blit(next_label, (panel_x, next_y))
+        
+        box = pygame.Rect(panel_x, next_y + 28, 120, 100)
         pygame.draw.rect(self.screen, (15, 20, 40), box, border_radius=8)
         pygame.draw.rect(self.screen, (80, 255, 80), box, width=2, border_radius=8)
         
@@ -608,12 +715,19 @@ class HybridSpaceTetrisGame(BaseGame):
         self.screen.blit(wave_surf, (panel_x, wave_y))
         self.screen.blit(wave_val, (panel_x, wave_y + 22))
         
-        # Lines (themed as "ELIMINATED")
+        # Lines (themed as "CLEARED")
         elim_y = wave_y + 60
         elim_surf = self.hud_font.render(f"CLEARED", True, (255, 100, 200))
         elim_val = self.hud_font.render(f"{self.total_lines} LINES", True, (255, 255, 255))
         self.screen.blit(elim_surf, (panel_x, elim_y))
         self.screen.blit(elim_val, (panel_x, elim_y + 22))
+        
+        # Ghost toggle hint
+        ghost_y = elim_y + 60
+        ghost_status = "ON" if self.show_ghost else "OFF"
+        ghost_color = (100, 255, 100) if self.show_ghost else (255, 100, 100)
+        ghost_surf = self.hud_font.render(f"GHOST[G]:{ghost_status}", True, ghost_color)
+        self.screen.blit(ghost_surf, (panel_x, ghost_y))
 
     def _build_pause_buttons(self) -> None:
         self.pause_button_rects.clear()
