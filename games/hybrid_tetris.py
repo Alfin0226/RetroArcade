@@ -17,17 +17,10 @@ from . import BaseGame, register_game
 from systems.rules import get_rules
 from systems.scoring import ScoreEvent, tetris_score, ScoreBreakdown, calculate_score_breakdown
 
-# ==================== TETRIS COMPONENTS (UNCHANGED) ====================
+# Import pre-defined constants from original game
+from .tetris import TETROMINOES
 
-TETROMINOES = {
-    "I": [(0, 0), (1, 0), (2, 0), (3, 0)],
-    "O": [(0, 0), (1, 0), (0, 1), (1, 1)],
-    "L": [(0, 0), (0, 1), (0, 2), (1, 2)],
-    "J": [(1, 0), (1, 1), (1, 2), (0, 2)],
-    "T": [(0, 0), (1, 0), (2, 0), (1, 1)],
-    "S": [(1, 0), (2, 0), (0, 1), (1, 1)],
-    "Z": [(0, 0), (1, 0), (1, 1), (2, 1)],
-}
+# ==================== HYBRID-SPECIFIC COMPONENTS ====================
 
 # Snake-themed colors for tetrominoes (greenish palette)
 SHAPE_COLORS = {

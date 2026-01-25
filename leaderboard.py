@@ -74,7 +74,7 @@ class LeaderboardView:
         
         # Title
         title_emoji = load_emoji("🏆", EMOJI_SIZE)
-        self.screen.blit(title_emoji, (self.cfg.width // 2 - title_emoji.get_width() // 2 - 60, 20))
+        self.screen.blit(title_emoji, (self.cfg.width // 2 - title_emoji.get_width() // 2 - 80, 35))
         title = self.title_font.render("Leaderboard", True, (255, 215, 0))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2 + 20, 30))
         

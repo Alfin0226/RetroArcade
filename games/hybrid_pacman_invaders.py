@@ -30,14 +30,14 @@ from systems.rules import get_rules
 from systems.ai import astar
 from systems.scoring import ScoreBreakdown, calculate_score_breakdown
 
-# Colors (Space Invaders themed)
-MAZE_COLOR = (33, 33, 255)
-PELLET_COLOR = (255, 183, 174)
-ENERGIZER_COLOR = (255, 183, 174)
-PLAYER_COLOR = (255, 255, 0)  # Pac-Man stays yellow
-FRIGHTENED_COLOR = (33, 33, 255)  # Blue when vulnerable
+# Import pre-defined constants from original games
+from .pac_man import (
+    MAZE_COLOR, PELLET_COLOR, ENERGIZER_COLOR, PLAYER_COLOR, 
+    FRIGHTENED_COLOR, FRUIT_TABLE, RAW_MAP
+)
+from .space_invaders import ENEMY_PATTERNS
 
-# Space Invader colors (replacing ghost colors)
+# Hybrid-specific: Space Invader colors for the 4 "ghosts"
 INVADER_COLORS = [
     (255, 80, 80),    # Red Invader (was Blinky)
     (255, 80, 255),   # Magenta Invader (was Pinky)
@@ -45,55 +45,10 @@ INVADER_COLORS = [
     (255, 165, 80),   # Orange Invader (was Clyde)
 ]
 
-# Space Invader pixel art patterns for each "ghost"
-INVADER_PATTERNS = [
-    # Type 0 - Classic squid (Blinky replacement)
-    [
-        [0,0,0,1,1,0,0,0],
-        [0,0,1,1,1,1,0,0],
-        [0,1,1,1,1,1,1,0],
-        [1,1,0,1,1,0,1,1],
-        [1,1,1,1,1,1,1,1],
-        [0,0,1,0,0,1,0,0],
-        [0,1,0,1,1,0,1,0],
-        [1,0,1,0,0,1,0,1],
-    ],
-    # Type 1 - Crab style (Pinky replacement)
-    [
-        [0,0,1,0,0,0,1,0,0],
-        [0,0,0,1,0,1,0,0,0],
-        [0,0,1,1,1,1,1,0,0],
-        [0,1,1,0,1,0,1,1,0],
-        [1,1,1,1,1,1,1,1,1],
-        [1,0,1,1,1,1,1,0,1],
-        [1,0,1,0,0,0,1,0,1],
-        [0,0,0,1,1,1,0,0,0],
-    ],
-    # Type 2 - Octopus style (Inky replacement)
-    [
-        [0,0,0,0,1,1,0,0,0,0],
-        [0,1,1,1,1,1,1,1,1,0],
-        [1,1,1,1,1,1,1,1,1,1],
-        [1,1,1,0,0,0,0,1,1,1],
-        [1,1,1,1,1,1,1,1,1,1],
-        [0,0,0,1,1,1,1,0,0,0],
-        [0,0,1,1,0,0,1,1,0,0],
-        [1,1,0,0,0,0,0,0,1,1],
-    ],
-    # Type 3 - Bug style (Clyde replacement)
-    [
-        [0,0,0,1,1,1,1,0,0,0],
-        [0,1,1,1,1,1,1,1,1,0],
-        [1,1,0,1,1,1,1,0,1,1],
-        [1,1,1,1,1,1,1,1,1,1],
-        [0,1,1,1,0,0,1,1,1,0],
-        [0,0,1,0,0,0,0,1,0,0],
-        [0,1,0,0,0,0,0,0,1,0],
-        [0,0,1,0,0,0,0,1,0,0],
-    ],
-]
+# Use first 4 patterns from space_invaders for the 4 invader enemies
+INVADER_PATTERNS = ENEMY_PATTERNS[:4]
 
-# Frightened invader pattern (same for all when vulnerable)
+# Hybrid-specific: Frightened invader pattern (same for all when vulnerable)
 FRIGHTENED_PATTERN = [
     [0,1,1,1,1,1,1,1,1,0],
     [1,1,1,1,1,1,1,1,1,1],
@@ -104,53 +59,6 @@ FRIGHTENED_PATTERN = [
     [0,1,1,1,1,1,1,1,1,0],
     [0,0,1,0,0,0,0,1,0,0],
 ]
-
-# Fruit scoring table by level
-FRUIT_TABLE = [
-    (1, "Cherry", 100),
-    (2, "Strawberry", 300),
-    (4, "Orange", 500),
-    (6, "Apple", 700),
-    (8, "Melon", 1000),
-    (10, "Spaceship", 2000),
-    (12, "Bell", 3000),
-    (99, "Key", 5000),
-]
-
-# Classic Pac-Man maze layout
-RAW_MAP = """
-############################
-#............##............#
-#.####.#####.##.#####.####.#
-#o####.#####.##.#####.####o#
-#.####.#####.##.#####.####.#
-#..........................#
-#.####.##.########.##.####.#
-#.####.##.########.##.####.#
-#......##....##....##......#
-######.##### ## #####.######
-######.##### ## #####.######
-######.##          ##.######
-######.## ###--### ##.######
-######.## #      # ##.######
-T     .   #      #   .     T
-######.## #      # ##.######
-######.## ######## ##.######
-######.##          ##.######
-######.## ######## ##.######
-######.## ######## ##.######
-#............##............#
-#.####.#####.##.#####.####.#
-#.####.#####.##.#####.####.#
-#o..##.......P........##..o#
-###.##.##.########.##.##.###
-###.##.##.########.##.##.###
-#......##....##....##......#
-#.##########.##.##########.#
-#.##########.##.##########.#
-#..........................#
-############################
-""".strip("\n")
 
 Vec2 = Tuple[int, int]
 

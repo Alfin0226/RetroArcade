@@ -20,55 +20,16 @@ from systems.rules import get_rules
 from systems.ai import astar
 from systems.scoring import ScoreBreakdown, calculate_score_breakdown
 
-# Colors
-MAZE_COLOR = (33, 33, 255)
+#Import pre-defined constants from original games
+from .pac_man import (
+    MAZE_COLOR, ENERGIZER_COLOR, FRIGHTENED_COLOR, GHOST_COLORS, RAW_MAP
+)
+
+# Hybrid-specific colors (Snake theme)
 APPLE_COLOR = (255, 50, 50)
 APPLE_STEM_COLOR = (139, 90, 43)
 APPLE_LEAF_COLOR = (34, 139, 34)
-ENERGIZER_COLOR = (255, 183, 174)
 PLAYER_COLOR = (50, 205, 50)  # Green snake-like player
-FRIGHTENED_COLOR = (33, 33, 255)
-GHOST_COLORS = [
-    (255, 0, 0),      # Red (Blinky)
-    (255, 184, 255),  # Pink (Pinky)
-    (0, 255, 255),    # Cyan (Inky)
-    (255, 184, 82),   # Orange (Clyde)
-]
-
-# Classic Pac-Man maze layout (same as pac_man.py)
-RAW_MAP = """
-############################
-#............##............#
-#.####.#####.##.#####.####.#
-#o####.#####.##.#####.####o#
-#.####.#####.##.#####.####.#
-#..........................#
-#.####.##.########.##.####.#
-#.####.##.########.##.####.#
-#......##....##....##......#
-######.##### ## #####.######
-######.##### ## #####.######
-######.##          ##.######
-######.## ###--### ##.######
-######.## #      # ##.######
-T     .   #      #   .     T
-######.## #      # ##.######
-######.## ######## ##.######
-######.##          ##.######
-######.## ######## ##.######
-######.## ######## ##.######
-#............##............#
-#.####.#####.##.#####.####.#
-#.####.#####.##.#####.####.#
-#o..##.......P........##..o#
-###.##.##.########.##.##.###
-###.##.##.########.##.##.###
-#......##....##....##......#
-#.##########.##.##########.#
-#.##########.##.##########.#
-#..........................#
-############################
-""".strip("\n")
 
 Vec2 = Tuple[int, int]
 
