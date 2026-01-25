@@ -461,31 +461,27 @@ class SpaceInvadersGame(BaseGame):
             self._draw_game_over()
 
     def _draw_enemy(self, rect: pygame.Rect, enemy_type: int) -> None:
-        """Draw an enemy as a simple red block (temporary restore)."""
-        # Temporary: Draw all enemies as red blocks
-        pygame.draw.rect(self.screen, SI_ENEMY_COLOR, rect)
+        """Draw an enemy using pixel art pattern."""
+        pattern = ENEMY_PATTERNS[enemy_type]
+        color = ENEMY_COLORS[enemy_type]
         
-        # Original pixel art code (commented out):
-        # pattern = ENEMY_PATTERNS[enemy_type]
-        # color = ENEMY_COLORS[enemy_type]
-        # 
-        # # Calculate pixel size based on rect and pattern dimensions
-        # pattern_height = len(pattern)
-        # pattern_width = len(pattern[0]) if pattern else 0
-        # 
-        # if pattern_width == 0 or pattern_height == 0:
-        #     return
-        # 
-        # pixel_w = rect.width / pattern_width
-        # pixel_h = rect.height / pattern_height
-        # 
-        # for row_idx, row in enumerate(pattern):
-        #     for col_idx, pixel in enumerate(row):
-        #         if pixel:
-        #             px = rect.x + col_idx * pixel_w
-        #             py = rect.y + row_idx * pixel_h
-        #             pygame.draw.rect(self.screen, color, 
-        #                            pygame.Rect(int(px), int(py), int(pixel_w) + 1, int(pixel_h) + 1))
+        # Calculate pixel size based on rect and pattern dimensions
+        pattern_height = len(pattern)
+        pattern_width = len(pattern[0]) if pattern else 0
+        
+        if pattern_width == 0 or pattern_height == 0:
+            return
+        
+        pixel_w = rect.width / pattern_width
+        pixel_h = rect.height / pattern_height
+        
+        for row_idx, row in enumerate(pattern):
+            for col_idx, pixel in enumerate(row):
+                if pixel:
+                    px = rect.x + col_idx * pixel_w
+                    py = rect.y + row_idx * pixel_h
+                    pygame.draw.rect(self.screen, color, 
+                                   pygame.Rect(int(px), int(py), int(pixel_w) + 1, int(pixel_h) + 1))
 
     def _build_go_buttons(self) -> None:
         self.go_button_rects.clear()
