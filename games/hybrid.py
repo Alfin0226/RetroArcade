@@ -1,6 +1,4 @@
-"""
-Hybrid Mode 1: Snake + Pac-Man
-"""
+#Hybrid Mode 1: Snake + Pac-Man
 
 from __future__ import annotations
 import math
@@ -66,14 +64,11 @@ class HybridGame(BaseGame):
         self.apples = {p for p in self.apples if p in reachable and p not in self.player_block}
         self.energizers = {e for e in self.energizers if e in reachable and e not in self.player_block}
         
-        # Cell sizing
-        usable_w = max(400, self.cfg.width - 160)
-        usable_h = max(400, self.cfg.height - 160)
-        self.cell = max(18, min(24, min(usable_w // self.w, usable_h // self.h)))
-        self.offset = pygame.Vector2(
-            (self.cfg.width - self.w * self.cell) // 2,
-            (self.cfg.height - self.h * self.cell) // 2
-        )
+        # Cell sizing (dynamically scaled)
+        self.cell = 20
+        self.offset = pygame.Vector2(0, 0)
+        self._last_screen_size: tuple[int, int] = (0, 0)
+        self._compute_layout()
         
         # Player
         self.player = pygame.Vector2(*self.player_start)
@@ -127,10 +122,7 @@ class HybridGame(BaseGame):
         self.apples_total = len(self.apples) + len(self.energizers)
         self.apples_eaten = 0
         
-        # UI
-        self.font = pygame.font.SysFont("arial", 20)
-        self.title_font = pygame.font.SysFont("arial", 32)
-        self.hud_font = pygame.font.SysFont("arial", 28)
+        # UI (fonts created by _compute_layout)
         self.game_over = False
         self.win = False
         self.go_button_rects: list[tuple[str, pygame.Rect]] = []
@@ -150,6 +142,28 @@ class HybridGame(BaseGame):
         # Pause system
         self.paused = False
         self.pause_button_rects: list[tuple[str, pygame.Rect]] = []
+
+    def _compute_layout(self) -> None:
+        """Recalculate cell size, offsets, and fonts based on current screen dimensions."""
+        sw, sh = self.cfg.width, self.cfg.height
+        if (sw, sh) == self._last_screen_size:
+            return
+        self._last_screen_size = (sw, sh)
+
+        usable_w = max(400, sw - int(sw * 0.12))
+        usable_h = max(400, sh - int(sh * 0.12))
+        self.cell = max(12, min(usable_w // self.w, usable_h // self.h))
+        self.offset = pygame.Vector2(
+            (sw - self.w * self.cell) // 2,
+            (sh - self.h * self.cell) // 2,
+        )
+
+        font_size = max(14, int(self.cell * 0.9))
+        title_size = max(20, int(self.cell * 1.5))
+        hud_size = max(16, int(self.cell * 1.3))
+        self.font = pygame.font.SysFont("arial", font_size)
+        self.title_font = pygame.font.SysFont("arial", title_size)
+        self.hud_font = pygame.font.SysFont("arial", hud_size)
 
     def _parse_map(self, raw: str):
         lines = raw.splitlines()
@@ -680,6 +694,7 @@ class HybridGame(BaseGame):
     # ==================== DRAWING ====================
 
     def draw(self) -> None:
+        self._compute_layout()
         self._draw_maze()
         self._draw_collectibles()
         
@@ -711,18 +726,21 @@ class HybridGame(BaseGame):
 
     def _draw_collectibles(self) -> None:
         ox, oy = int(self.offset.x), int(self.offset.y)
+        apple_sz = max(3, self.cell // 4)
+        ener_big = max(4, self.cell // 3)
+        ener_small = max(3, self.cell // 4)
         
         # Draw apples (instead of pellets)
         for x, y in self.apples:
             cx = ox + x * self.cell + self.cell // 2
             cy = oy + y * self.cell + self.cell // 2
-            self._draw_apple(cx, cy, 5)
+            self._draw_apple(cx, cy, apple_sz)
         
         # Draw energizers (power-ups)
         for x, y in self.energizers:
             cx = ox + x * self.cell + self.cell // 2
             cy = oy + y * self.cell + self.cell // 2
-            r = 7 if (pygame.time.get_ticks() // 250) % 2 == 0 else 5
+            r = ener_big if (pygame.time.get_ticks() // 250) % 2 == 0 else ener_small
             pygame.draw.circle(self.screen, ENERGIZER_COLOR, (cx, cy), r)
 
     def _draw_apple(self, cx: int, cy: int, size: int) -> None:
@@ -831,26 +849,30 @@ class HybridGame(BaseGame):
 
     def _draw_hud(self) -> None:
         ox = int(self.offset.x)
+        hx = max(8, int(ox * 0.2))
+        hy = max(8, int(self.offset.y * 0.2))
+        icon_sz = max(5, self.cell // 3)
         
         # Draw apple icon and count
-        apple_icon_x = 10
-        apple_icon_y = 12
-        self._draw_apple(apple_icon_x + 8, apple_icon_y + 8, 8)
+        apple_icon_x = hx
+        apple_icon_y = hy
+        self._draw_apple(apple_icon_x + icon_sz, apple_icon_y + icon_sz, icon_sz)
         apples_left = len(self.apples) + len(self.energizers)
         apple_text = self.font.render(f"x {apples_left}", True, (255, 255, 255))
-        self.screen.blit(apple_text, (apple_icon_x + 22, apple_icon_y))
+        self.screen.blit(apple_text, (apple_icon_x + icon_sz * 2 + 6, apple_icon_y))
         
         # Score
         score_text = self.font.render(f"SCORE: {self.score}", True, (255, 255, 255))
-        self.screen.blit(score_text, (self.cfg.width // 2 - score_text.get_width() // 2, 10))
+        self.screen.blit(score_text, (self.cfg.width // 2 - score_text.get_width() // 2, hy))
         
         # Lives
         lives_text = self.font.render(f"LIVES: {self.lives}", True, (255, 255, 255))
-        self.screen.blit(lives_text, (self.cfg.width - lives_text.get_width() - 10, 10))
+        self.screen.blit(lives_text, (self.cfg.width - lives_text.get_width() - hx, hy))
         
         # Mode title
         mode_text = self.font.render("SNAKE + PAC-MAN", True, (50, 205, 50))
-        self.screen.blit(mode_text, (self.cfg.width // 2 - mode_text.get_width() // 2, self.cfg.height - 30))
+        bottom_margin = max(10, int(self.offset.y * 0.3))
+        self.screen.blit(mode_text, (self.cfg.width // 2 - mode_text.get_width() // 2, self.cfg.height - bottom_margin - mode_text.get_height()))
 
     def _build_go_buttons(self) -> None:
         self.go_button_rects.clear()
@@ -916,7 +938,9 @@ class HybridGame(BaseGame):
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
-        title = self.title_font.render("Game Over", True, (255, 255, 255))
+        go_title_font = pygame.font.SysFont("arial", 36)
+        go_font = pygame.font.SysFont("arial", 20)
+        title = go_title_font.render("Game Over", True, (255, 255, 255))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
         
         # Score breakdown
@@ -926,9 +950,9 @@ class HybridGame(BaseGame):
         else:
             stats.append(f"Score: {self.score}")
         
-        stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
+        stat_surfs = [go_font.render(s, True, (220, 220, 240)) for s in stats]
         if self.score_breakdown and len(stat_surfs) > 0:
-            stat_surfs[-1] = self.font.render(stats[-1], True, (255, 255, 100))
+            stat_surfs[-1] = go_font.render(stats[-1], True, (255, 255, 100))
         
         pad_x, pad_y = 16, 14
         line_spacing = 6
@@ -952,7 +976,7 @@ class HybridGame(BaseGame):
         spacing, padding_x, padding_y, button_width = 50, 20, 10, 340
         start_y = box.bottom + gap
         for i, (key, text) in enumerate(labels):
-            surf = self.font.render(text, True, (255, 255, 255))
+            surf = go_font.render(text, True, (255, 255, 255))
             w = max(button_width, surf.get_width() + padding_x * 2)
             h = surf.get_height() + padding_y * 2
             x = self.cfg.width // 2 - w // 2
@@ -967,7 +991,7 @@ class HybridGame(BaseGame):
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=8)
             label = "Play Again" if key == "restart" else "Back To Menu"
-            ts = self.font.render(label, True, (255, 255, 255))
+            ts = go_font.render(label, True, (255, 255, 255))
             self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))
 
     def _draw_win(self) -> None:

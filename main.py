@@ -549,8 +549,8 @@ class ArcadeApp:
         
         # Difficulty selection
         diff_label = self.font.render("Difficulty:", True, (255, 255, 255))
-        diff_y = current_y
-        current_y += 35
+        self._diff_label_y = current_y
+        current_y += diff_label.get_height() + 10
         
         # Difficulty buttons in a row
         diff_buttons = [
@@ -627,7 +627,7 @@ class ArcadeApp:
         
         # Draw difficulty label
         diff_label = self.font.render("Difficulty:", True, (255, 255, 255))
-        diff_y = self.cfg.height // 2 - 160 + 50 * 3 + 50 + 10  # After sliders, mute, and fps toggle
+        diff_y = getattr(self, '_diff_label_y', self.cfg.height // 2 + 40)
         self.screen.blit(diff_label, (self.cfg.width // 2 - diff_label.get_width() // 2, diff_y))
         
         # Draw buttons

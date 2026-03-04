@@ -1,6 +1,5 @@
-"""
-Hybrid Mode 3: Pac-Man + Space Invaders
-"""
+#Hybrid Mode 3: Pac-Man + Space Invaders
+
 
 from __future__ import annotations
 import math
@@ -87,14 +86,11 @@ class HybridPacManInvadersGame(BaseGame):
         self.pellets = {p for p in self.pellets if p in reachable and p not in self.player_block}
         self.energizers = {e for e in self.energizers if e in reachable and e not in self.player_block}
         
-        # Cell sizing
-        usable_w = max(400, self.cfg.width - 160)
-        usable_h = max(400, self.cfg.height - 160)
-        self.cell = max(18, min(24, min(usable_w // self.w, usable_h // self.h)))
-        self.offset = pygame.Vector2(
-            (self.cfg.width - self.w * self.cell) // 2,
-            (self.cfg.height - self.h * self.cell) // 2
-        )
+        # Cell sizing (dynamically scaled)
+        self.cell = 20
+        self.offset = pygame.Vector2(0, 0)
+        self._last_screen_size: tuple[int, int] = (0, 0)
+        self._compute_layout()
         
         # Player
         self.player = pygame.Vector2(*self.player_start)
@@ -159,10 +155,7 @@ class HybridPacManInvadersGame(BaseGame):
         self.fruit_name = "Cherry"
         self.fruit_level_pts = 100
         
-        # UI
-        self.font = pygame.font.SysFont("arial", 20)
-        self.title_font = pygame.font.SysFont("arial", 32)
-        self.hud_font = pygame.font.SysFont("arial", 28)
+        # UI (fonts created by _compute_layout)
         self.game_over = False
         self.win = False
         self.go_button_rects: list[tuple[str, pygame.Rect]] = []
@@ -184,6 +177,28 @@ class HybridPacManInvadersGame(BaseGame):
         
         # Animation timer for invaders
         self.invader_anim_timer = 0.0
+
+    def _compute_layout(self) -> None:
+        """Recalculate cell size, offsets, and fonts based on current screen dimensions."""
+        sw, sh = self.cfg.width, self.cfg.height
+        if (sw, sh) == self._last_screen_size:
+            return
+        self._last_screen_size = (sw, sh)
+
+        usable_w = max(400, sw - int(sw * 0.12))
+        usable_h = max(400, sh - int(sh * 0.12))
+        self.cell = max(12, min(usable_w // self.w, usable_h // self.h))
+        self.offset = pygame.Vector2(
+            (sw - self.w * self.cell) // 2,
+            (sh - self.h * self.cell) // 2,
+        )
+
+        font_size = max(14, int(self.cell * 0.9))
+        title_size = max(20, int(self.cell * 1.5))
+        hud_size = max(16, int(self.cell * 1.3))
+        self.font = pygame.font.SysFont("arial", font_size)
+        self.title_font = pygame.font.SysFont("arial", title_size)
+        self.hud_font = pygame.font.SysFont("arial", hud_size)
 
     def _parse_map(self, raw: str):
         lines = raw.splitlines()
@@ -520,7 +535,7 @@ class HybridPacManInvadersGame(BaseGame):
             self.pellets_eaten += 1
             self.score += 10
             pellet_eaten = True
-            self.sounds.play("eat")
+            self.sounds.play("chomp")
         if pnode in self.energizers:
             self.energizers.remove(pnode)
             self.pellets_eaten += 1
@@ -765,6 +780,7 @@ class HybridPacManInvadersGame(BaseGame):
     # ==================== DRAWING ====================
 
     def draw(self) -> None:
+        self._compute_layout()
         self._draw_maze()
         self._draw_collectibles()
         
@@ -796,14 +812,17 @@ class HybridPacManInvadersGame(BaseGame):
 
     def _draw_collectibles(self) -> None:
         ox, oy = int(self.offset.x), int(self.offset.y)
+        pellet_r = max(1, self.cell // 10)
+        ener_big = max(3, self.cell // 3)
+        ener_small = max(2, self.cell // 5)
         for x, y in self.pellets:
             cx = ox + x * self.cell + self.cell // 2
             cy = oy + y * self.cell + self.cell // 2
-            pygame.draw.circle(self.screen, PELLET_COLOR, (cx, cy), 2)
+            pygame.draw.circle(self.screen, PELLET_COLOR, (cx, cy), pellet_r)
         for x, y in self.energizers:
             cx = ox + x * self.cell + self.cell // 2
             cy = oy + y * self.cell + self.cell // 2
-            r = 6 if (pygame.time.get_ticks() // 250) % 2 == 0 else 4
+            r = ener_big if (pygame.time.get_ticks() // 250) % 2 == 0 else ener_small
             pygame.draw.circle(self.screen, ENERGIZER_COLOR, (cx, cy), r)
         if self.fruit_active:
             x, y = self.fruit_pos
@@ -917,13 +936,16 @@ class HybridPacManInvadersGame(BaseGame):
         s1 = self.font.render(f"Score: {self.score}", True, (255, 255, 255))
         s2 = self.font.render(f"Lives: {self.lives}", True, (255, 255, 255))
         s3 = self.font.render(f"Level: {self.level}", True, (255, 255, 255))
-        self.screen.blit(s1, (16, 10))
-        self.screen.blit(s2, (16, 32))
-        self.screen.blit(s3, (16, 54))
+        hx = max(8, int(self.offset.x * 0.3))
+        line_h = self.font.get_height() + 2
+        hy = max(6, int(self.offset.y * 0.2))
+        self.screen.blit(s1, (hx, hy))
+        self.screen.blit(s2, (hx, hy + line_h))
+        self.screen.blit(s3, (hx, hy + line_h * 2))
         
         # Mode label
         mode_label = self.font.render("PAC-MAN + INVADERS", True, (255, 100, 100))
-        self.screen.blit(mode_label, (self.cfg.width // 2 - mode_label.get_width() // 2, 10))
+        self.screen.blit(mode_label, (self.cfg.width // 2 - mode_label.get_width() // 2, hy))
 
     def _build_go_buttons(self) -> None:
         self.go_button_rects.clear()
@@ -988,7 +1010,9 @@ class HybridPacManInvadersGame(BaseGame):
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
-        title = self.title_font.render("Game Over", True, (255, 100, 100))
+        go_title_font = pygame.font.SysFont("arial", 36)
+        go_font = pygame.font.SysFont("arial", 20)
+        title = go_title_font.render("Game Over", True, (255, 255, 255))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
         
         stats = [f"Level: {self.level}"]
@@ -997,9 +1021,9 @@ class HybridPacManInvadersGame(BaseGame):
         else:
             stats.append(f"Score: {self.score}")
         
-        stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
+        stat_surfs = [go_font.render(s, True, (220, 220, 240)) for s in stats]
         if self.score_breakdown and len(stat_surfs) > 0:
-            stat_surfs[-1] = self.font.render(stats[-1], True, (255, 255, 100))
+            stat_surfs[-1] = go_font.render(stats[-1], True, (255, 255, 100))
         
         pad_x, pad_y = 16, 14
         line_spacing = 6
@@ -1008,8 +1032,8 @@ class HybridPacManInvadersGame(BaseGame):
         box_w = max(320, content_w + pad_x * 2)
         box_h = content_h + pad_y * 2
         box = pygame.Rect(self.cfg.width // 2 - box_w // 2, self.cfg.height // 2 - 140, box_w, box_h)
-        pygame.draw.rect(self.screen, (50, 35, 35), box, border_radius=10)
-        pygame.draw.rect(self.screen, (180, 100, 100), box, 2, border_radius=10)
+        pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=10)
+        pygame.draw.rect(self.screen, (140, 150, 190), box, 2, border_radius=10)
         
         y = box.y + pad_y
         for s in stat_surfs:
@@ -1017,13 +1041,12 @@ class HybridPacManInvadersGame(BaseGame):
             y += s.get_height() + line_spacing
         
         gap = 28
-        self._build_go_buttons()
         self.go_button_rects.clear()
         labels = [("restart", "Play Again"), ("back", "Back To Menu")]
         spacing = 50
         start_y = box.bottom + gap
         for i, (key, text) in enumerate(labels):
-            surf = self.font.render(text, True, (255, 255, 255))
+            surf = go_font.render(text, True, (255, 255, 255))
             w = max(340, surf.get_width() + 40)
             h = surf.get_height() + 20
             x = self.cfg.width // 2 - w // 2
@@ -1033,12 +1056,12 @@ class HybridPacManInvadersGame(BaseGame):
         mouse = pygame.mouse.get_pos()
         for key, rect in self.go_button_rects:
             hovered = rect.collidepoint(*mouse)
-            fill = (100, 70, 70) if hovered else (60, 45, 45)
-            border = (255, 255, 255) if hovered else (180, 140, 140)
+            fill = (70, 80, 120) if hovered else (40, 45, 85)
+            border = (255, 255, 255) if hovered else (140, 150, 190)
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=8)
             label = "Play Again" if key == "restart" else "Back To Menu"
-            ts = self.font.render(label, True, (255, 255, 255))
+            ts = go_font.render(label, True, (255, 255, 255))
             self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))
 
     def _draw_win(self) -> None:

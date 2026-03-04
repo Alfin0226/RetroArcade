@@ -39,11 +39,13 @@ class TetrisGame(BaseGame):
         self.drop_timer = 0.0
         self.gravity = self.rules["gravity_delay"]
         self.soft_drop = False
-        # HUD/layout
+        # HUD/layout (dynamically scaled)
         self.cell = 24
         self.offset_x = 80
         self.offset_y = 40
         self.hud_font = pygame.font.SysFont("arial", 24)
+        self._last_screen_size: tuple[int, int] = (0, 0)
+        self._compute_layout()
         # Progress
         self.level = 1
         self.total_lines = 0
@@ -71,6 +73,32 @@ class TetrisGame(BaseGame):
         # Time tracking for bonus calculation
         self.time_played: float = 0.0
         self.score_breakdown: ScoreBreakdown | None = None
+
+    def _compute_layout(self) -> None:
+        """Recalculate cell size, offsets, and fonts based on current screen dimensions."""
+        sw, sh = self.cfg.width, self.cfg.height
+        if (sw, sh) == self._last_screen_size:
+            return
+        self._last_screen_size = (sw, sh)
+
+        # Reserve ~25% width for the HUD panel on the right
+        board_area_w = int(sw * 0.70)
+        board_area_h = int(sh * 0.92)  # leave some top/bottom margin
+
+        # Cell size: fit the grid into the available board area
+        cell_w = board_area_w // self.grid_width
+        cell_h = board_area_h // self.grid_height
+        self.cell = max(12, min(cell_w, cell_h))  # keep cells square, min 12px
+
+        # Center the board vertically, with a left margin
+        board_pixel_w = self.grid_width * self.cell
+        board_pixel_h = self.grid_height * self.cell
+        self.offset_x = max(20, (board_area_w - board_pixel_w) // 2 + 20)
+        self.offset_y = max(10, (sh - board_pixel_h) // 2)
+
+        # Scale font to cell size
+        font_size = max(14, int(self.cell * 1.0))
+        self.hud_font = pygame.font.SysFont("arial", font_size)
 
     def reset(self) -> None:
         super().reset()
@@ -289,6 +317,8 @@ class TetrisGame(BaseGame):
                 self.lock_piece()
 
     def draw(self) -> None:
+        # Recompute layout if screen size changed (e.g. fullscreen toggle)
+        self._compute_layout()
         # Board
         cell = self.cell
         ox, oy = self.offset_x, self.offset_y
@@ -353,13 +383,16 @@ class TetrisGame(BaseGame):
         cell = self.cell
         ox, oy = self.offset_x, self.offset_y
         board_w = self.grid_width * cell
-        panel_x = ox + board_w + 24
+        panel_x = ox + board_w + max(16, cell)
         panel_y = oy
         
-        # Hold box (Solution 1 - Hold Piece System)
+        # Hold box (Hold Piece System)
+        label_gap = max(20, int(cell * 1.2))
+        box_w = max(100, cell * 5)
+        box_h = max(80, cell * 4 + 8)
         hold_label = self.hud_font.render("Hold [C]", True, (255, 255, 255))
         self.screen.blit(hold_label, (panel_x, panel_y))
-        hold_box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
+        hold_box = pygame.Rect(panel_x, panel_y + label_gap, box_w, box_h)
         # Dim the box if hold is not available this cycle
         box_color = (35, 40, 80) if self.can_hold else (25, 30, 60)
         border_color = (140, 150, 190) if self.can_hold else (80, 90, 120)
@@ -382,22 +415,20 @@ class TetrisGame(BaseGame):
                 ry = base_y + y * cell
                 pygame.draw.rect(self.screen, color, pygame.Rect(rx, ry, cell - 1, cell - 1))
         
-        # Next box (moved down to make room for hold box)
-        next_y = hold_box.bottom + 20
+        # Next box (scaled)
+        next_y = hold_box.bottom + max(12, cell // 2)
         next_label = self.hud_font.render("Next", True, (255, 255, 255))
         self.screen.blit(next_label, (panel_x, next_y))
-        box = pygame.Rect(panel_x, next_y + 28, 120, 100)
+        box = pygame.Rect(panel_x, next_y + label_gap, box_w, box_h)
         pygame.draw.rect(self.screen, (35, 40, 80), box, border_radius=8)
         pygame.draw.rect(self.screen, (140, 150, 190), box, width=2, border_radius=8)
         # Draw next shape centered in box (use shape's color)
         if self.next_shape_key:
             pts = TETROMINOES[self.next_shape_key]
             color = SHAPE_COLORS.get(self.next_shape_key, (200, 120, 255))
-            # normalize shape to start near (0,0)
             minx = min(x for x, _ in pts)
             miny = min(y for _, y in pts)
             norm = [(x - minx, y - miny) for x, y in pts]
-            # center inside box
             base_x = box.x + (box.width - 4 * cell) // 2
             base_y = box.y + (box.height - 4 * cell) // 2
             for x, y in norm:
@@ -405,20 +436,21 @@ class TetrisGame(BaseGame):
                 ry = base_y + y * cell
                 pygame.draw.rect(self.screen, color, pygame.Rect(rx, ry, cell - 1, cell - 1))
         
-        # Score, Level, Lines
-        score_y = box.bottom + 20
+        # Score, Level, Lines (scaled spacing)
+        line_h = max(26, int(cell * 1.3))
+        score_y = box.bottom + max(16, cell // 2)
         score_surf = self.hud_font.render(f"Score: {self.score}", True, (255, 255, 255))
         lvl_surf = self.hud_font.render(f"Level: {self.level}", True, (200, 220, 255))
         lines_surf = self.hud_font.render(f"Lines: {self.total_lines}", True, (200, 255, 220))
         self.screen.blit(score_surf, (panel_x, score_y))
-        self.screen.blit(lvl_surf, (panel_x, score_y + 30))
-        self.screen.blit(lines_surf, (panel_x, score_y + 60))
+        self.screen.blit(lvl_surf, (panel_x, score_y + line_h))
+        self.screen.blit(lines_surf, (panel_x, score_y + line_h * 2))
         
         # Ghost toggle hint
         ghost_status = "ON" if self.show_ghost else "OFF"
         ghost_color = (150, 255, 150) if self.show_ghost else (255, 150, 150)
         ghost_surf = self.hud_font.render(f"Ghost [G]: {ghost_status}", True, ghost_color)
-        self.screen.blit(ghost_surf, (panel_x, score_y + 100))
+        self.screen.blit(ghost_surf, (panel_x, score_y + line_h * 3 + max(8, cell // 3)))
 
     # ----- Game Over Overlay -----
     def _calculate_final_score(self) -> None:
@@ -446,7 +478,7 @@ class TetrisGame(BaseGame):
             total_h = len(labels) * spacing
             start_y = self.cfg.height // 2 - total_h // 2 + 20
         for i, (key, text) in enumerate(labels):
-            surf = self.hud_font.render(text, True, (255, 255, 255))
+            surf = pygame.font.SysFont("arial", 20).render(text, True, (255, 255, 255))
             tw, th = surf.get_size()
             w = max(button_width, tw + padding_x * 2)
             h = th + padding_y * 2
@@ -461,7 +493,7 @@ class TetrisGame(BaseGame):
         self.screen.blit(overlay, (0, 0))
 
         title_font = pygame.font.SysFont("arial", 36)
-        small = self.hud_font
+        small = pygame.font.SysFont("arial", 20)
         title = title_font.render("Game Over", True, (255, 255, 255))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 

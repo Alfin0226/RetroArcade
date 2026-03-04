@@ -114,7 +114,12 @@ class SpaceInvadersGame(BaseGame):
     def __init__(self, screen: pygame.Surface, cfg, sounds, user_id=None):
         super().__init__(screen, cfg, sounds, user_id=user_id)
         self.rules = get_rules("space_invaders").data
-        self.player_rect = pygame.Rect(cfg.width // 2 - 25, cfg.height - 80, 50, 20)
+        # Scale factors (base design is 960x720)
+        self.sx: float = cfg.width / 960
+        self.sy: float = cfg.height / 720
+        self._last_screen_size: tuple[int, int] = (cfg.width, cfg.height)
+        pw, ph = int(50 * self.sx), int(20 * self.sy)
+        self.player_rect = pygame.Rect(cfg.width // 2 - pw // 2, cfg.height - int(80 * self.sy), pw, ph)
         self.bullets: list[pygame.Rect] = []
         self.enemies: list[tuple[pygame.Rect, int]] = []  # (rect, enemy_type)
         self.enemy_bullets: list[pygame.Rect] = []  # Enemy projectiles
@@ -128,13 +133,14 @@ class SpaceInvadersGame(BaseGame):
         self.mystery_ship: pygame.Rect | None = None
         self.mystery_ship_timer = 0.0
         self.mystery_ship_delay = 15.0  # Seconds between mystery ship spawns
-        self.mystery_ship_speed = 150
+        self.mystery_ship_speed = int(150 * self.sx)
         self.mystery_ship_direction = 1
         
-        # Font for scoreboard
-        self.font = pygame.font.Font(None, 36)
-        self.title_font = pygame.font.SysFont("arial", 32)
-        self.hud_font = pygame.font.SysFont("arial", 28)
+        # Font for scoreboard (scaled)
+        fscale = min(self.sx, self.sy)
+        self.font = pygame.font.Font(None, max(24, int(36 * fscale)))
+        self.title_font = pygame.font.SysFont("arial", max(20, int(32 * fscale)))
+        self.hud_font = pygame.font.SysFont("arial", max(18, int(28 * fscale)))
         
         # Game over state
         self.game_over = False
@@ -148,27 +154,29 @@ class SpaceInvadersGame(BaseGame):
     def _create_bunkers(self) -> list[list[pygame.Rect]]:
         """Create 4 defense bunkers made of destructible blocks."""
         bunkers = []
-        bunker_width = 60
-        bunker_height = 40
-        block_size = 10
+        sx, sy = self.sx, self.sy
+        bunker_width = int(60 * sx)
+        bunker_height = int(40 * sy)
+        block_w = max(4, int(10 * sx))
+        block_h = max(4, int(10 * sy))
         spacing = (self.cfg.width - 4 * bunker_width) // 5
+        cols = max(1, bunker_width // block_w)
+        rows = max(1, bunker_height // block_h)
         
         for i in range(4):
             bunker_x = spacing + i * (bunker_width + spacing)
-            bunker_y = self.cfg.height - 150
+            bunker_y = self.cfg.height - int(150 * sy)
             blocks = []
             
-            # Create bunker shape (arch-like)
-            for row in range(bunker_height // block_size):
-                for col in range(bunker_width // block_size):
-                    # Skip bottom center blocks to create arch opening
-                    if row >= 2 and 2 <= col <= 3:
+            for row in range(rows):
+                for col in range(cols):
+                    if rows >= 4 and row >= rows // 2 and cols >= 4 and cols // 2 - 1 <= col <= cols // 2:
                         continue
                     block = pygame.Rect(
-                        bunker_x + col * block_size,
-                        bunker_y + row * block_size,
-                        block_size - 1,
-                        block_size - 1
+                        bunker_x + col * block_w,
+                        bunker_y + row * block_h,
+                        block_w - 1,
+                        block_h - 1
                     )
                     blocks.append(block)
             bunkers.append(blocks)
@@ -176,7 +184,12 @@ class SpaceInvadersGame(BaseGame):
 
     def reset(self) -> None:
         super().reset()
-        self.lives = 3  # Reset lives on full reset
+        self.sx = self.cfg.width / 960
+        self.sy = self.cfg.height / 720
+        self._last_screen_size = (self.cfg.width, self.cfg.height)
+        self.lives = 3
+        pw, ph = int(50 * self.sx), int(20 * self.sy)
+        self.player_rect = pygame.Rect(self.cfg.width // 2 - pw // 2, self.cfg.height - int(80 * self.sy), pw, ph)
         self.bullets.clear()
         self.enemy_bullets.clear()
         self._spawn_new_wave()
@@ -186,21 +199,53 @@ class SpaceInvadersGame(BaseGame):
         self.enemy_shoot_timer = 0.0
         self.direction = 1
         self.speed = 30
+        self.mystery_ship_speed = int(150 * self.sx)
         self.game_over = False
         self.go_button_rects.clear()
         self.time_played = 0.0
         self.wave = 1
         self.score_breakdown = None
 
+    def _compute_layout(self) -> None:
+        """Rescale all entities and fonts when screen size changes."""
+        sw, sh = self.cfg.width, self.cfg.height
+        if (sw, sh) == self._last_screen_size:
+            return
+        old_sw, old_sh = self._last_screen_size
+        rx, ry = sw / old_sw, sh / old_sh
+        self._last_screen_size = (sw, sh)
+        self.sx = sw / 960
+        self.sy = sh / 720
+
+        def _rescale(r: pygame.Rect) -> pygame.Rect:
+            return pygame.Rect(int(r.x * rx), int(r.y * ry),
+                               int(r.width * rx), int(r.height * ry))
+
+        self.player_rect = _rescale(self.player_rect)
+        self.enemies = [(_rescale(r), t) for r, t in self.enemies]
+        self.bullets = [_rescale(b) for b in self.bullets]
+        self.enemy_bullets = [_rescale(b) for b in self.enemy_bullets]
+        self.bunkers = [[_rescale(b) for b in bk] for bk in self.bunkers]
+        if self.mystery_ship:
+            self.mystery_ship = _rescale(self.mystery_ship)
+        self.mystery_ship_speed = int(150 * self.sx)
+
+        fscale = min(self.sx, self.sy)
+        self.font = pygame.font.Font(None, max(24, int(36 * fscale)))
+        self.title_font = pygame.font.SysFont("arial", max(20, int(32 * fscale)))
+        self.hud_font = pygame.font.SysFont("arial", max(18, int(28 * fscale)))
+
     def _spawn_new_wave(self) -> None:
         """Spawn a new wave of enemies with 7 rows (one for each type)."""
         self.enemies = []
+        sx, sy = self.sx, self.sy
         num_rows = 7
         num_cols = 8
+        ew, eh = int(40 * sx), int(28 * sy)
         for y in range(num_rows):
-            enemy_type = y % 7  # Each row gets a different type
+            enemy_type = y % 7
             for x in range(num_cols):
-                rect = pygame.Rect(100 + x * 55, 60 + y * 36, 40, 28)
+                rect = pygame.Rect(int((100 + x * 55) * sx), int((60 + y * 36) * sy), ew, eh)
                 self.enemies.append((rect, enemy_type))
         self.direction = 1
 
@@ -232,19 +277,19 @@ class SpaceInvadersGame(BaseGame):
         
         if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
             if len(self.bullets) < self.rules["bullet_limit"]:
-                bullet = pygame.Rect(self.player_rect.centerx - 4, self.player_rect.y - 12, 8, 16)
+                bw, bh = int(8 * self.sx), int(16 * self.sy)
+                bullet = pygame.Rect(self.player_rect.centerx - bw // 2, self.player_rect.y - bh, bw, bh)
                 self.bullets.append(bullet)
                 self.sounds.play("shoot")
 
     def _spawn_mystery_ship(self) -> None:
         """Spawn a mystery ship from either side of the screen."""
+        mw, mh = int(50 * self.sx), int(20 * self.sy)
         if random.random() < 0.5:
-            # Spawn from left
-            self.mystery_ship = pygame.Rect(-60, 30, 50, 20)
+            self.mystery_ship = pygame.Rect(-mw - 10, int(30 * self.sy), mw, mh)
             self.mystery_ship_direction = 1
         else:
-            # Spawn from right
-            self.mystery_ship = pygame.Rect(self.cfg.width + 10, 30, 50, 20)
+            self.mystery_ship = pygame.Rect(self.cfg.width + 10, int(30 * self.sy), mw, mh)
             self.mystery_ship_direction = -1
 
     def _enemy_shoot(self) -> None:
@@ -255,13 +300,14 @@ class SpaceInvadersGame(BaseGame):
         # Group enemies by column and pick the bottom-most in each column
         columns: dict[int, pygame.Rect] = {}
         for enemy_rect, _ in self.enemies:
-            col_key = enemy_rect.centerx // 55
+            col_key = enemy_rect.centerx // max(1, int(55 * self.sx))
             if col_key not in columns or enemy_rect.y > columns[col_key].y:
                 columns[col_key] = enemy_rect
         
         # Pick a random bottom enemy to shoot
         shooter = random.choice(list(columns.values()))
-        bullet = pygame.Rect(shooter.centerx - 3, shooter.bottom, 6, 12)
+        bw, bh = int(6 * self.sx), int(12 * self.sy)
+        bullet = pygame.Rect(shooter.centerx - bw // 2, shooter.bottom, bw, bh)
         self.enemy_bullets.append(bullet)
 
     def update(self, dt: float) -> None:
@@ -271,22 +317,22 @@ class SpaceInvadersGame(BaseGame):
         self.time_played += dt
         keys = pygame.key.get_pressed()
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            self.player_rect.x -= 200 * dt
+            self.player_rect.x -= int(200 * self.sx * dt)
         if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            self.player_rect.x += 200 * dt
+            self.player_rect.x += int(200 * self.sx * dt)
         
         # Keep player in bounds
         self.player_rect.x = max(0, min(self.cfg.width - self.player_rect.width, self.player_rect.x))
         
         # Update player bullets
         for bullet in list(self.bullets):
-            bullet.y -= int(480 * dt)
+            bullet.y -= int(480 * self.sy * dt)
             if bullet.bottom < 0:
                 self.bullets.remove(bullet)
 
         # Update enemy bullets
         for bullet in list(self.enemy_bullets):
-            bullet.y += int(300 * dt)
+            bullet.y += int(300 * self.sy * dt)
             if bullet.top > self.cfg.height:
                 self.enemy_bullets.remove(bullet)
 
@@ -310,22 +356,23 @@ class SpaceInvadersGame(BaseGame):
                 self.mystery_ship = None
 
         # Enemy movement
-        movement = self.direction * self.speed * dt
+        movement = self.direction * self.speed * self.sx * dt
         shift_down = False
         
         # Check if any enemy would go out of bounds
+        edge_margin = int(40 * self.sx)
         for enemy_rect, _ in self.enemies:
             next_x = enemy_rect.x + movement
-            if (self.direction > 0 and next_x + enemy_rect.width >= self.cfg.width - 40) or \
-               (self.direction < 0 and next_x <= 40):
+            if (self.direction > 0 and next_x + enemy_rect.width >= self.cfg.width - edge_margin) or \
+               (self.direction < 0 and next_x <= edge_margin):
                 shift_down = True
                 break
         
         if shift_down:
-            # Reverse direction and move down
             self.direction *= -1
+            step_down = int(20 * self.sy)
             for enemy_rect, _ in self.enemies:
-                enemy_rect.y += 20
+                enemy_rect.y += step_down
         else:
             # Normal horizontal movement
             for enemy_rect, _ in self.enemies:
@@ -371,7 +418,7 @@ class SpaceInvadersGame(BaseGame):
                     self.go_button_rects.clear()
                     return
                 else:
-                    self.player_rect.x = self.cfg.width // 2 - 25
+                    self.player_rect.x = self.cfg.width // 2 - self.player_rect.width // 2
                 break
             
             # Check bunker hit by enemy bullet
@@ -409,7 +456,7 @@ class SpaceInvadersGame(BaseGame):
         
         # Check if enemies reached bottom
         for enemy_rect, _ in self.enemies:
-            if enemy_rect.bottom >= self.cfg.height - 100:
+            if enemy_rect.bottom >= self.cfg.height - int(100 * self.sy):
                 self.game_over = True
                 self._calculate_final_score()
                 self.save_score()  # Save score to database
@@ -417,17 +464,19 @@ class SpaceInvadersGame(BaseGame):
     
     def _respawn_player(self) -> None:
         """Respawn player after losing a life (without full reset)."""
-        self.player_rect.x = self.cfg.width // 2 - 25
+        self.player_rect.x = self.cfg.width // 2 - self.player_rect.width // 2
         self.enemy_bullets.clear()
 
     def draw(self) -> None:
+        self._compute_layout()
         # Draw scoreboard
+        hud_y = max(6, int(10 * self.sy))
         score_text = self.font.render(f"SCORE: {self.score}", True, SI_TEXT_COLOR)
         lives_text = self.font.render(f"LIVES: {self.lives}", True, SI_TEXT_COLOR)
         wave_text = self.font.render(f"WAVE: {self.wave}", True, SI_TEXT_COLOR)
-        self.screen.blit(score_text, (10, 10))
-        self.screen.blit(wave_text, (self.cfg.width // 2 - wave_text.get_width() // 2, 10))
-        self.screen.blit(lives_text, (self.cfg.width - 120, 10))
+        self.screen.blit(score_text, (int(10 * self.sx), hud_y))
+        self.screen.blit(wave_text, (self.cfg.width // 2 - wave_text.get_width() // 2, hud_y))
+        self.screen.blit(lives_text, (self.cfg.width - lives_text.get_width() - int(10 * self.sx), hud_y))
         
         # Draw player
         pygame.draw.rect(self.screen, SI_PLAYER_COLOR, self.player_rect)
@@ -453,8 +502,9 @@ class SpaceInvadersGame(BaseGame):
         if self.mystery_ship:
             pygame.draw.rect(self.screen, SI_MYSTERY_COLOR, self.mystery_ship)
             # Add a little detail to make it look special
+            dw, dh = int(20 * self.sx), int(8 * self.sy)
             pygame.draw.rect(self.screen, SI_MYSTERY_DETAIL_COLOR, 
-                           pygame.Rect(self.mystery_ship.x + 15, self.mystery_ship.y - 5, 20, 8))
+                           pygame.Rect(self.mystery_ship.x + int(15 * self.sx), self.mystery_ship.y - int(5 * self.sy), dw, dh))
         
         # Draw game over screen
         if self.game_over:
@@ -515,7 +565,9 @@ class SpaceInvadersGame(BaseGame):
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         
-        title = self.title_font.render("Game Over", True, (255, 255, 255))
+        go_title_font = pygame.font.SysFont("arial", 36)
+        go_font = pygame.font.SysFont("arial", 20)
+        title = go_title_font.render("Game Over", True, (255, 255, 255))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
         
         # Score breakdown box
@@ -525,10 +577,10 @@ class SpaceInvadersGame(BaseGame):
         else:
             stats.append(f"Score: {self.score}")
         
-        stat_surfs = [self.font.render(s, True, (220, 220, 240)) for s in stats]
+        stat_surfs = [go_font.render(s, True, (220, 220, 240)) for s in stats]
         # Highlight final score line
         if self.score_breakdown and len(stat_surfs) > 0:
-            stat_surfs[-1] = self.font.render(stats[-1], True, (255, 255, 100))
+            stat_surfs[-1] = go_font.render(stats[-1], True, (255, 255, 100))
         
         pad_x, pad_y = 16, 14
         line_spacing = 6
@@ -552,7 +604,7 @@ class SpaceInvadersGame(BaseGame):
         spacing, padding_x, padding_y, button_width = 64, 22, 12, 360
         start_y = box.bottom + gap
         for i, (key, text) in enumerate(labels):
-            surf = self.font.render(text, True, (255, 255, 255))
+            surf = go_font.render(text, True, (255, 255, 255))
             w = max(button_width, surf.get_width() + padding_x * 2)
             h = surf.get_height() + padding_y * 2
             x = self.cfg.width // 2 - w // 2
@@ -567,5 +619,5 @@ class SpaceInvadersGame(BaseGame):
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, 2, border_radius=8)
             label = "Restart" if key == "restart" else "Back To Main Menu"
-            ts = self.font.render(label, True, (255, 255, 255))
+            ts = go_font.render(label, True, (255, 255, 255))
             self.screen.blit(ts, (rect.x + (rect.width - ts.get_width()) // 2, rect.y + (rect.height - ts.get_height()) // 2))

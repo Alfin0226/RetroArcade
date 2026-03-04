@@ -29,6 +29,7 @@ class SnakeGame(BaseGame):
         # Solution 2: Dynamic Map Generation based on selected map size
         self.map_size_key = map_size  # Store the selected map size key
         self.grid_w, self.grid_h = MAP_SIZES.get(map_size, MAP_SIZES["normal"])
+        self._last_screen_size: tuple[int, int] = (0, 0)
         
         # Calculate cell size to fit the map on screen with proper margins
         self._calculate_cell_size()
@@ -67,24 +68,34 @@ class SnakeGame(BaseGame):
         self.score_breakdown: ScoreBreakdown | None = None
     
     def _calculate_cell_size(self) -> None:
-        # Available space (with margins)
-        margin_x = 160  # Space for HUD on sides
-        margin_y = 160  # Space for top/bottom UI
-        available_w = self.cfg.width - margin_x
-        available_h = self.cfg.height - margin_y
-        
-        # Calculate cell size to fit grid
+        """Recalculate cell size, offsets, and fonts based on current screen dimensions."""
+        sw, sh = self.cfg.width, self.cfg.height
+        if (sw, sh) == self._last_screen_size:
+            return
+        self._last_screen_size = (sw, sh)
+
+        # Available space (proportional margins)
+        margin_x = int(sw * 0.12)
+        margin_y = int(sh * 0.12)
+        available_w = max(200, sw - margin_x)
+        available_h = max(200, sh - margin_y)
+
+        # Calculate cell size to fit grid – no upper cap
         cell_w = available_w // self.grid_w
         cell_h = available_h // self.grid_h
-        self.cell = min(cell_w, cell_h, 24)  # Cap at 24 for visual consistency
-        self.cell = max(self.cell, 12)  # Minimum cell size
-        
+        self.cell = max(12, min(cell_w, cell_h))
+
         # Center the grid on screen
         grid_pixel_w = self.grid_w * self.cell
         grid_pixel_h = self.grid_h * self.cell
-        offset_x = (self.cfg.width - grid_pixel_w) // 2
-        offset_y = (self.cfg.height - grid_pixel_h) // 2 + 20  # Slight offset for HUD
+        offset_x = (sw - grid_pixel_w) // 2
+        offset_y = (sh - grid_pixel_h) // 2 + int(sh * 0.02)
         self.offset = pygame.Vector2(offset_x, offset_y)
+
+        # Scale fonts
+        hud_size = max(16, int(self.cell * 1.4))
+        self.hud_font = pygame.font.SysFont("arial", hud_size)
+        self.hud_pos = (max(10, int(offset_x * 0.25)), max(8, int(offset_y * 0.4)))
 
     def reset(self) -> None:
         super().reset()
@@ -169,6 +180,9 @@ class SnakeGame(BaseGame):
             self.snake.pop()
 
     def draw(self) -> None:
+        # Recalculate layout if screen size changed (e.g. fullscreen toggle)
+        self._calculate_cell_size()
+
         # Background
         self.draw_background()
 
@@ -193,7 +207,7 @@ class SnakeGame(BaseGame):
         h = self.grid_h * cell
 
         # Border frame
-        border = 8
+        border = max(4, self.cell // 3)
         border_rect = pygame.Rect(ox - border, oy - border, w + border * 2, h + border * 2)
         pygame.draw.rect(self.screen, self.bg_border, border_rect, border_radius=6)
 
@@ -216,13 +230,14 @@ class SnakeGame(BaseGame):
         else:
             self.go_button_rects.clear()
         labels = [("restart", "Restart"), ("back", "Back To Main Menu")]
+        btn_font_size = 20
         spacing = 64
         padding_x, padding_y = 22, 12
         button_width = 360
         total_h = len(labels) * spacing
         start_y = self.cfg.height // 2 - total_h // 2 + 20
         for i, (key, text) in enumerate(labels):
-            surf = pygame.font.SysFont("arial", 28).render(text, True, (255, 255, 255))
+            surf = pygame.font.SysFont("arial", btn_font_size).render(text, True, (255, 255, 255))
             tw, th = surf.get_size()
             w = max(button_width, tw + padding_x * 2)
             h = th + padding_y * 2
@@ -255,7 +270,7 @@ class SnakeGame(BaseGame):
         self.screen.blit(overlay, (0, 0))
 
         font = pygame.font.SysFont("arial", 36)
-        small = pygame.font.SysFont("arial", 28)
+        small = pygame.font.SysFont("arial", 20)
         title = font.render("Game Over", True, (255, 255, 255))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 
@@ -331,13 +346,17 @@ class SnakeGame(BaseGame):
     def draw_scoreboard(self) -> None:
         # Small apple icon + count at top-left
         x, y = self.hud_pos
+        icon_sz = max(16, int(self.cell * 1.3))
         # Draw apple body
-        apple_rect = pygame.Rect(x, y, 26, 26)
+        apple_rect = pygame.Rect(x, y, icon_sz, icon_sz)
         pygame.draw.ellipse(self.screen, (214, 76, 50), apple_rect)
         # Highlight
-        pygame.draw.circle(self.screen, (255, 145, 120), (apple_rect.x + 8, apple_rect.y + 8), 4)
+        hl_r = max(2, icon_sz // 6)
+        pygame.draw.circle(self.screen, (255, 145, 120), (apple_rect.x + hl_r * 2, apple_rect.y + hl_r * 2), hl_r)
         # Leaf
-        leaf = pygame.Rect(apple_rect.right - 10, apple_rect.y - 2, 10, 8)
+        leaf_w = max(6, icon_sz // 3)
+        leaf_h = max(4, icon_sz // 4)
+        leaf = pygame.Rect(apple_rect.right - leaf_w, apple_rect.y - 2, leaf_w, leaf_h)
         pygame.draw.ellipse(self.screen, (74, 160, 67), leaf)
         # Stem
         pygame.draw.line(self.screen, (120, 80, 50), (apple_rect.centerx + 3, apple_rect.y + 2), (apple_rect.centerx + 1, apple_rect.y - 4), 2)
@@ -354,10 +373,10 @@ class SnakeGame(BaseGame):
         # Map size indicator 
         map_name = self.map_size_key.title()
         map_indicator = f"{map_name} ({self.grid_w}x{self.grid_h})"
-        small_font = pygame.font.SysFont("arial", 18)
+        small_font = pygame.font.SysFont("arial", max(12, int(self.hud_font.get_height() * 0.65)))
         map_surf = small_font.render(map_indicator, True, (200, 220, 200))
         map_x = self.cfg.width - map_surf.get_width() - 20
-        map_y = 16
+        map_y = max(8, int(self.offset.y * 0.4))
         # Draw background for readability
         bg_rect = pygame.Rect(map_x - 6, map_y - 2, map_surf.get_width() + 12, map_surf.get_height() + 4)
         pygame.draw.rect(self.screen, (30, 60, 40, 180), bg_rect, border_radius=4)

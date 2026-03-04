@@ -1,6 +1,4 @@
-"""
-Hybrid Mode 2: Snake + Tetris
-"""
+#Hybrid Mode 2: Snake + Tetris
 
 from __future__ import annotations
 import random
@@ -66,12 +64,14 @@ class HybridTetrisGame(BaseGame):
         self.gravity = self.rules["gravity_delay"]
         self.soft_drop = False
         
-        # HUD/layout
+        # HUD/layout (dynamically scaled)
         self.cell = 24
         self.offset_x = 80
         self.offset_y = 40
         self.hud_font = pygame.font.SysFont("arial", 24)
         self.title_font = pygame.font.SysFont("arial", 32)
+        self._last_screen_size: tuple[int, int] = (0, 0)
+        self._compute_layout()
         
         # Progress
         self.level = 1
@@ -107,18 +107,41 @@ class HybridTetrisGame(BaseGame):
 
     def _init_snake_background(self) -> None:
         """Initialize the decorative snake background."""
-        # Calculate snake cell size to fit behind tetris board
         board_width = self.grid_width * self.cell
         board_height = self.grid_height * self.cell
         
         self.snake_cell = max(12, min(board_width // SNAKE_GRID_W, board_height // SNAKE_GRID_H))
         
-        # Center snake grid behind tetris board
         snake_total_w = SNAKE_GRID_W * self.snake_cell
         snake_total_h = SNAKE_GRID_H * self.snake_cell
         
         self.snake_offset_x = self.offset_x + (board_width - snake_total_w) // 2
         self.snake_offset_y = self.offset_y + (board_height - snake_total_h) // 2
+
+    def _compute_layout(self) -> None:
+        """Recalculate cell size, offsets, and fonts based on current screen dimensions."""
+        sw, sh = self.cfg.width, self.cfg.height
+        if (sw, sh) == self._last_screen_size:
+            return
+        self._last_screen_size = (sw, sh)
+
+        board_area_w = int(sw * 0.70)
+        board_area_h = int(sh * 0.92)
+        cell_w = board_area_w // self.grid_width
+        cell_h = board_area_h // self.grid_height
+        self.cell = max(12, min(cell_w, cell_h))
+
+        board_pixel_w = self.grid_width * self.cell
+        board_pixel_h = self.grid_height * self.cell
+        self.offset_x = max(20, (board_area_w - board_pixel_w) // 2 + 20)
+        self.offset_y = max(10, (sh - board_pixel_h) // 2)
+
+        font_size = max(14, min(22, int(self.cell * 0.7)))
+        self.hud_font = pygame.font.SysFont("arial", font_size)
+        self.title_font = pygame.font.SysFont("arial", max(18, min(30, int(font_size * 1.3))))
+
+        # Rebuild snake background layout
+        self._init_snake_background()
 
     # ==================== TETRIS LOGIC (UNCHANGED) ====================
 
@@ -332,6 +355,7 @@ class HybridTetrisGame(BaseGame):
         2. Tetris grid with tetrominoes (decorated with snake/apple)
         3. UI / score
         """
+        self._compute_layout()
         # Layer 1 & 2: Tetris board with snake-style background
         self._draw_tetris_board()
         
@@ -434,17 +458,22 @@ class HybridTetrisGame(BaseGame):
         cell = self.cell
         ox, oy = self.offset_x, self.offset_y
         board_w = self.grid_width * cell
-        panel_x = ox + board_w + 24
+        panel_x = ox + board_w + max(16, cell)
         panel_y = oy
+        
+        label_gap = max(20, int(cell * 1.2))
+        box_w = max(100, cell * 5)
+        box_h = max(80, cell * 4 + 8)
+        line_h = max(22, int(cell * 1.3))
         
         # Mode label
         mode_label = self.hud_font.render("SNAKE + TETRIS", True, (100, 200, 100))
-        self.screen.blit(mode_label, (panel_x, panel_y - 30))
+        self.screen.blit(mode_label, (panel_x, panel_y - label_gap))
         
         # Hold box (Solution 1)
         hold_label = self.hud_font.render("Hold [C]", True, (200, 255, 200))
         self.screen.blit(hold_label, (panel_x, panel_y))
-        hold_box = pygame.Rect(panel_x, panel_y + 28, 120, 100)
+        hold_box = pygame.Rect(panel_x, panel_y + label_gap, box_w, box_h)
         box_color = (30, 50, 30) if self.can_hold else (20, 35, 20)
         border_color = (80, 140, 80) if self.can_hold else (50, 90, 50)
         pygame.draw.rect(self.screen, box_color, hold_box, border_radius=8)
@@ -465,10 +494,10 @@ class HybridTetrisGame(BaseGame):
                 pygame.draw.rect(self.screen, color, pygame.Rect(rx, ry, cell - 1, cell - 1))
         
         # Next box (moved down)
-        next_y = hold_box.bottom + 20
+        next_y = hold_box.bottom + label_gap
         next_label = self.hud_font.render("Next", True, (200, 255, 200))
         self.screen.blit(next_label, (panel_x, next_y))
-        box = pygame.Rect(panel_x, next_y + 28, 120, 100)
+        box = pygame.Rect(panel_x, next_y + label_gap, box_w, box_h)
         pygame.draw.rect(self.screen, (30, 50, 30), box, border_radius=8)
         pygame.draw.rect(self.screen, (80, 140, 80), box, width=2, border_radius=8)
         
@@ -487,19 +516,19 @@ class HybridTetrisGame(BaseGame):
                 pygame.draw.rect(self.screen, color, pygame.Rect(rx, ry, cell - 1, cell - 1))
         
         # Score, Level, Lines with snake theme
-        score_y = box.bottom + 20
+        score_y = box.bottom + label_gap
         score_surf = self.hud_font.render(f"Score: {self.score}", True, (200, 255, 200))
         lvl_surf = self.hud_font.render(f"Level: {self.level}", True, (180, 230, 180))
         lines_surf = self.hud_font.render(f"Lines: {self.total_lines}", True, (160, 210, 160))
         self.screen.blit(score_surf, (panel_x, score_y))
-        self.screen.blit(lvl_surf, (panel_x, score_y + 30))
-        self.screen.blit(lines_surf, (panel_x, score_y + 60))
+        self.screen.blit(lvl_surf, (panel_x, score_y + line_h))
+        self.screen.blit(lines_surf, (panel_x, score_y + line_h * 2))
         
         # Ghost toggle hint
         ghost_status = "ON" if self.show_ghost else "OFF"
         ghost_color = (150, 255, 150) if self.show_ghost else (255, 150, 150)
         ghost_surf = self.hud_font.render(f"Ghost [G]: {ghost_status}", True, ghost_color)
-        self.screen.blit(ghost_surf, (panel_x, score_y + 100))
+        self.screen.blit(ghost_surf, (panel_x, score_y + line_h * 3 + 10))
 
     # ==================== GAME OVER ====================
 
@@ -525,7 +554,7 @@ class HybridTetrisGame(BaseGame):
             total_h = len(labels) * spacing
             start_y = self.cfg.height // 2 - total_h // 2 + 20
         for i, (key, text) in enumerate(labels):
-            surf = self.hud_font.render(text, True, (255, 255, 255))
+            surf = pygame.font.SysFont("arial", 20).render(text, True, (255, 255, 255))
             tw, th = surf.get_size()
             w = max(button_width, tw + padding_x * 2)
             h = th + padding_y * 2
@@ -538,7 +567,9 @@ class HybridTetrisGame(BaseGame):
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
 
-        title = self.title_font.render("Game Over", True, (200, 255, 200))
+        go_title_font = pygame.font.SysFont("arial", 36)
+        go_font = pygame.font.SysFont("arial", 20)
+        title = go_title_font.render("Game Over", True, (200, 255, 200))
         self.screen.blit(title, (self.cfg.width // 2 - title.get_width() // 2, self.cfg.height // 2 - 200))
 
         # Stats with score breakdown
@@ -548,9 +579,9 @@ class HybridTetrisGame(BaseGame):
         else:
             stats.append(f"Score: {self.score}")
         
-        stat_surfs = [self.hud_font.render(line, True, (200, 240, 200)) for line in stats]
+        stat_surfs = [go_font.render(line, True, (200, 240, 200)) for line in stats]
         if self.score_breakdown and len(stat_surfs) > 0:
-            stat_surfs[-1] = self.hud_font.render(stats[-1], True, (200, 255, 150))
+            stat_surfs[-1] = go_font.render(stats[-1], True, (200, 255, 150))
         
         # Data box
         pad_x, pad_y = 16, 14
@@ -582,7 +613,7 @@ class HybridTetrisGame(BaseGame):
             border = (150, 255, 150) if hovered else (80, 140, 100)
             pygame.draw.rect(self.screen, fill, rect, border_radius=8)
             pygame.draw.rect(self.screen, border, rect, width=2, border_radius=8)
-            text_surf = self.hud_font.render(label, True, (200, 255, 200))
+            text_surf = go_font.render(label, True, (200, 255, 200))
             tx = rect.x + (rect.width - text_surf.get_width()) // 2
             ty = rect.y + (rect.height - text_surf.get_height()) // 2
             self.screen.blit(text_surf, (tx, ty))

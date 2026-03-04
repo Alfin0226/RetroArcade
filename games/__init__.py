@@ -103,9 +103,9 @@ def save_game_score_for_user(user_id: int, game_name: str, score: int) -> bool:
             "pac_man": "pacman",
             "space_invaders": "space_invaders",
             "hybrid": "hybrid",
-            "hybrid_tetris": "hybrid_tetris",
-            "hybrid_pacman_invaders": "hybrid_pacman_invaders",
-            "hybrid_space_tetris": "hybrid_space_tetris",
+            "hybrid_tetris": "hybrid",
+            "hybrid_pacman_invaders": "hybrid",
+            "hybrid_space_tetris": "hybrid",
         }
         db_game_name = game_map.get(game_name, game_name)
         
